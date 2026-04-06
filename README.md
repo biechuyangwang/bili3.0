@@ -6,43 +6,50 @@
 
 - Python 3.9+
 - pip
+- Git
 
-## 安装步骤
+## 快速开始
+
+### 1. 克隆本项目
 
 ```bash
-# 1. 进入项目目录
-cd D:/github/bili3.0
+git clone https://github.com/biechuyangwang/bili3.0.git
+cd bili3.0
+```
 
-# 2. 安装依赖
+### 2. 拉取依赖库源码
+
+本项目依赖两个第三方库，它们的源码不在本仓库中（已通过 `.gitignore` 排除），需要单独克隆：
+
+```bash
+# bilibili-api - B站全功能 API 调用库
+git clone https://github.com/Nemo2011/bilibili-api.git
+
+# blivedm - B站直播弹幕 WebSocket 客户端
+git clone https://github.com/xfgryujk/blivedm.git
+```
+
+### 3. 安装 Python 依赖
+
+```bash
+# 安装 bilibili-api（通过 pip）
 pip install bilibili-api-python aiohttp
 
-# 3. blivedm 需从源码安装（PyPI 版本过旧）
+# blivedm 需从源码安装（PyPI 版本过旧，本项目依赖 1.1.5+）
 cd blivedm
 pip install -e .
 cd ..
 ```
 
-## 获取账号凭据
+### 4. 配置凭据
 
-1. 浏览器登录 [bilibili.com](https://www.bilibili.com)
-2. 按 `F12` 打开开发者工具 → `Application`（应用） → `Cookies` → `https://www.bilibili.com`
-3. 找到并复制以下三个值：
-   - **SESSDATA**
-   - **bili_jct**
-   - **buvid3**
-
-> 注意：从 Chrome 开发者工具复制时，不要勾选"显示已解码的网址"。
-
-## 配置
-
-项目提供了配置模板 `config.template.py`，首次使用时：
+项目提供了配置模板，首次使用时复制并填入你的真实信息：
 
 ```bash
-# 复制模板为 config.py
 cp config.template.py config.py
 ```
 
-然后编辑 `config.py`，填入你的真实凭据和直播间号：
+编辑 `config.py`，填入凭据和直播间号：
 
 ```python
 SESSDATA = "你的 SESSDATA"
@@ -53,16 +60,18 @@ ROOM_ID = 12345  # 直播间 URL 中的数字
 
 > **重要**：`config.py` 包含个人凭据，已在 `.gitignore` 中排除，不会被提交到版本控制。
 
-可自定义的配置项：
+**凭据获取方式：**
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `SEND_COOLDOWN` | 发弹幕最小间隔（秒） | 3.0 |
-| `RESPONSE_RULES` | 关键词→回复映射 | 见文件 |
-| `SC_THANK_YOU_TEMPLATE` | SC 感谢模板 | `感谢 {uname} 的醒目留言~` |
-| `LOG_LEVEL` | 日志级别 | INFO |
+1. 浏览器登录 [bilibili.com](https://www.bilibili.com)
+2. 按 `F12` 打开开发者工具 → `Application`（应用） → `Cookies` → `https://www.bilibili.com`
+3. 找到并复制以下三个值：
+   - **SESSDATA**
+   - **bili_jct**
+   - **buvid3**
 
-## 运行
+> 注意：从 Chrome 开发者工具复制时，不要勾选"显示已解码的网址"。
+
+### 5. 运行
 
 ```bash
 python main.py
@@ -81,6 +90,15 @@ python main.py
 
 按 `Ctrl+C` 优雅退出。
 
+## 配置项说明
+
+| 配置项 | 说明 | 默认值 |
+|--------|------|--------|
+| `SEND_COOLDOWN` | 发弹幕最小间隔（秒） | 3.0 |
+| `RESPONSE_RULES` | 关键词→回复映射 | 见文件 |
+| `SC_THANK_YOU_TEMPLATE` | SC 感谢模板 | `感谢 {uname} 的醒目留言~` |
+| `LOG_LEVEL` | 日志级别 | INFO |
+
 ## 项目结构
 
 ```
@@ -91,7 +109,8 @@ bili3.0/
 ├── sender.py           # 弹幕发送（带限流）
 ├── bot.py              # 消息处理器（接收→响应→发送）
 ├── main.py             # 入口
-└── blivedm/            # blivedm 源码（已 pip install -e .）
+├── bilibili-api/       # bilibili-api 源码（需单独克隆）
+└── blivedm/            # blivedm 源码（需单独克隆，已 pip install -e .）
 ```
 
 ## 扩展指南
