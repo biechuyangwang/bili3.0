@@ -1,0 +1,18 @@
+# 真实凭据
+config.py
+
+# 第三方库源码
+bilibili-api/
+blivedm/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
