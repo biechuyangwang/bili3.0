@@ -11,7 +11,7 @@ import logging
 import blivedm
 import blivedm.models.web as web_models
 
-from responder import KeywordResponseHandler
+from responder import CompositeResponseHandler
 from sender import DanmakuSender
 
 logger = logging.getLogger("danmaku_bot.handler")
@@ -20,9 +20,12 @@ logger = logging.getLogger("danmaku_bot.handler")
 class DanmakuBotHandler(blivedm.BaseHandler):
     """弹幕机器人消息处理器"""
 
-    def __init__(self, responder: KeywordResponseHandler, sender: DanmakuSender):
+    def __init__(self, responder: CompositeResponseHandler, sender: DanmakuSender,
+                 real_room_id: int = 0, bot_uid: int = 0):
         self._responder = responder
         self._sender = sender
+        self._real_room_id = real_room_id
+        self._bot_uid = bot_uid
 
     def _on_heartbeat(self, client: blivedm.BLiveClient, message: web_models.HeartbeatMessage):
         logger.debug("[%d] 心跳", client.room_id)
@@ -30,6 +33,17 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     def _on_danmaku(self, client: blivedm.BLiveClient, message: web_models.DanmakuMessage):
         logger.info("[弹幕] %s (uid=%s, 勋章=%s): %s",
                      message.uname, message.uid, message.medal_level, message.msg)
+
+        # 过滤自己的弹幕，避免死循环
+        if self._bot_uid and message.uid == self._bot_uid:
+            logger.debug("跳过自身弹幕: uid=%d", message.uid)
+            return
+
+        # 过滤非本房间粉丝（未佩戴勋章 或 勋章不属于本房间）
+        if self._real_room_id and message.medal_room_id != self._real_room_id:
+            logger.debug("跳过非本房间粉丝: uid=%d, 勋章房间=%d",
+                         message.uid, message.medal_room_id)
+            return
 
         response = self._responder.handle_danmaku(
             uname=message.uname,

@@ -15,12 +15,14 @@ import sys
 
 import aiohttp
 import blivedm
+from bilibili_api.live import LiveRoom
 from bilibili_api.utils.network import Credential
 
 import config
 from bot import DanmakuBotHandler
-from responder import KeywordResponseHandler
+from responder import KeywordResponseHandler, CompositeResponseHandler
 from sender import DanmakuSender
+from song_request import SongRequestHandler
 
 
 def setup_logging():
@@ -54,16 +56,35 @@ async def main():
     )
 
     # 构建组件
-    responder = KeywordResponseHandler(
-        rules=config.RESPONSE_RULES,
-        sc_template=config.SC_THANK_YOU_TEMPLATE,
-    )
+    # 响应器链：点歌优先 → 关键词兜底
+    responder = CompositeResponseHandler([
+        SongRequestHandler(
+            keyword=config.SONG_REQUEST_KEYWORD,
+            source=config.SONG_REQUEST_SOURCE,
+        ),
+        KeywordResponseHandler(
+            rules=config.RESPONSE_RULES,
+            sc_template=config.SC_THANK_YOU_TEMPLATE,
+        ),
+    ])
     sender = DanmakuSender(
         room_display_id=config.ROOM_ID,
         credential=credential,
         cooldown=config.SEND_COOLDOWN,
     )
-    handler = DanmakuBotHandler(responder=responder, sender=sender)
+
+    # 解析真实房间号（URL 中的短号可能和实际房间号不同，弹幕中的 medal_room_id 是真实房间号）
+    live_room = LiveRoom(room_display_id=config.ROOM_ID, credential=credential)
+    room_info = await live_room.get_room_play_info()
+    real_room_id = room_info["room_id"]
+    logger.info("房间号解析: %d -> %d", config.ROOM_ID, real_room_id)
+
+    handler = DanmakuBotHandler(
+        responder=responder,
+        sender=sender,
+        real_room_id=real_room_id,
+        bot_uid=config.BOT_UID,
+    )
 
     # 构建 aiohttp session（带 cookie 用于 blivedm 获取用户名）
     cookies = http.cookies.SimpleCookie()
