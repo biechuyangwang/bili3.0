@@ -10,7 +10,7 @@ import json
 import logging
 import urllib.parse
 import webbrowser
-from typing import Optional
+from typing import Optional, Tuple
 
 logger = logging.getLogger("danmaku_bot.song_request")
 
@@ -66,7 +66,17 @@ class SongRequestHandler:
         webbrowser.open(url)
 
         display = song_name + (f" - {singer}" if singer else "")
-        return f"已收到点歌：{display}，稍后播放~"
+        # return f"已收到点歌：{display}，稍后播放~"
+
+    def parse_request(self, msg: str) -> Optional[Tuple[str, str]]:
+        """解析点歌请求，返回 (歌名, 歌手) 或 None"""
+        if not msg.startswith(self._keyword):
+            return None
+        content = msg[len(self._keyword):].strip()
+        if not content:
+            return None
+        parts = content.split(None, 1)
+        return (parts[0], parts[1] if len(parts) > 1 else "")
 
     def handle_super_chat(self, uname: str, message: str, price: int, uid: int) -> Optional[str]:
         return None

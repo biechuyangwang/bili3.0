@@ -73,6 +73,8 @@ ROOM_ID = 12345  # 直播间 URL 中的数字
 
 ### 5. 运行
 
+#### 命令行模式
+
 ```bash
 python main.py
 ```
@@ -89,6 +91,20 @@ python main.py
 ```
 
 按 `Ctrl+C` 优雅退出。
+
+#### GUI 模式
+
+```bash
+python gui.py
+```
+
+启动后会打开一个暗色主题的控制面板界面：
+
+- **顶栏**：输入房间号，点击「连接」按钮连接直播间，连接后按钮变为「断开」
+- **弹幕区**（左侧）：实时显示弹幕、SC、礼物消息，按类型着色
+- **点歌列表**（右侧）：显示点歌记录（歌曲名、点歌人、时间）
+
+> GUI 模式下日志仅写入文件（`logs/danmaku.log`），不输出到控制台。
 
 ## 配置项说明
 
@@ -112,7 +128,8 @@ bili3.0/
 ├── song_request.py     # 点歌模块（LX Music scheme URL）
 ├── sender.py           # 弹幕发送（带限流）
 ├── bot.py              # 消息处理器（接收→过滤→响应→发送）
-├── main.py             # 入口
+├── gui.py              # GUI 图形界面（暗色主题控制面板）
+├── main.py             # CLI 入口
 ├── bilibili-api/       # bilibili-api 源码（需单独克隆）
 └── blivedm/            # blivedm 源码（需单独克隆，已 pip install -e .）
 ```
@@ -180,6 +197,8 @@ RESPONSE_RULES = {
 
 ```
 弹幕到达
+  │
+  ├─ 以"点歌"开头？── 是 → 不过滤自身和粉丝，直接处理
   │
   ├─ 是否机器人自己？── 是 → 跳过
   │

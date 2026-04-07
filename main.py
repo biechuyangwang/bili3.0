@@ -11,6 +11,8 @@ Bilibili 直播弹幕智能响应机器人 - 入口
 import asyncio
 import http.cookies
 import logging
+import logging.handlers
+import os
 import sys
 
 import aiohttp
@@ -20,17 +22,38 @@ from bilibili_api.utils.network import Credential
 
 import config
 from bot import DanmakuBotHandler
-from responder import KeywordResponseHandler, CompositeResponseHandler
+from responder import KeywordResponseHandler
 from sender import DanmakuSender
 from song_request import SongRequestHandler
 
 
 def setup_logging():
-    logging.basicConfig(
-        level=getattr(logging, config.LOG_LEVEL, logging.INFO),
-        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-        datefmt="%H:%M:%S",
+    log_level = getattr(logging, config.LOG_LEVEL, logging.INFO)
+    log_format = "%(asctime)s [%(name)s] %(levelname)s: %(message)s"
+
+    # 控制台输出
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(logging.Formatter(log_format, datefmt="%H:%M:%S"))
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    root_logger.addHandler(console_handler)
+
+    # 按天轮转的文件日志
+    log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    file_handler = logging.handlers.TimedRotatingFileHandler(
+        filename=os.path.join(log_dir, "danmaku.log"),
+        when="midnight",
+        interval=1,
+        backupCount=30,
+        encoding="utf-8",
     )
+    file_handler.suffix = "%Y-%m-%d.log"
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S"))
+    root_logger.addHandler(file_handler)
 
 
 async def main():
@@ -56,17 +79,14 @@ async def main():
     )
 
     # 构建组件
-    # 响应器链：点歌优先 → 关键词兜底
-    responder = CompositeResponseHandler([
-        SongRequestHandler(
-            keyword=config.SONG_REQUEST_KEYWORD,
-            source=config.SONG_REQUEST_SOURCE,
-        ),
-        KeywordResponseHandler(
-            rules=config.RESPONSE_RULES,
-            sc_template=config.SC_THANK_YOU_TEMPLATE,
-        ),
-    ])
+    song_handler = SongRequestHandler(
+        keyword=config.SONG_REQUEST_KEYWORD,
+        source=config.SONG_REQUEST_SOURCE,
+    )
+    responder = KeywordResponseHandler(
+        rules=config.RESPONSE_RULES,
+        sc_template=config.SC_THANK_YOU_TEMPLATE,
+    )
     sender = DanmakuSender(
         room_display_id=config.ROOM_ID,
         credential=credential,
@@ -80,6 +100,7 @@ async def main():
     logger.info("房间号解析: %d -> %d", config.ROOM_ID, real_room_id)
 
     handler = DanmakuBotHandler(
+        song_handler=song_handler,
         responder=responder,
         sender=sender,
         real_room_id=real_room_id,
