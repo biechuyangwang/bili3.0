@@ -30,10 +30,12 @@ class KeywordResponseHandler:
         if self.sc_template:
             return self.sc_template.format(uname=uname, message=message, price=price)
         return f"感谢 {uname} 的SC！"
-
-    def handle_gift(self, uname: str, gift_name: str, num: int, coin_type: str) -> Optional[str]:
-        # 仅对金瓜子礼物回复，避免刷屏
-        if coin_type == "gold":
+       
+    def handle_gift(self, uname: str, gift_name: str, num: int, coin_type: str,
+                    price: int = 0) -> Optional[str]:
+        # 仅对金瓜子礼物回复，且总价值 >= 1000 电池（100000金瓜子）
+        total = price * num
+        if coin_type == "gold" and total >= 99000:
             return f"感谢 {uname} 赠送的 {gift_name}x{num}~"
         return None
 

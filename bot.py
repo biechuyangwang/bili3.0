@@ -130,6 +130,7 @@ class DanmakuBotHandler(blivedm.BaseHandler):
             gift_name=message.gift_name,
             num=message.num,
             coin_type=message.coin_type,
+            price=message.price,
         )
         if response:
             asyncio.create_task(self._safe_send(response))

@@ -170,12 +170,12 @@ RESPONSE_RULES = {
 }
 ```
 
-### 4. 礼物类型过滤（`responder.py`）
+### 4. 礼物价值过滤（`responder.py`）
 
-`KeywordResponseHandler.handle_gift()` 对礼物消息按 `coin_type` 过滤：
+`KeywordResponseHandler.handle_gift()` 对礼物消息按类型和总价值过滤：
 
-- **金瓜子礼物**（`coin_type == "gold"`）：发送感谢回复
-- **银瓜子礼物**（`coin_type == "silver"`）：直接忽略，避免免费礼物刷屏
+- **金瓜子礼物**（`coin_type == "gold"`）且总价值 >= 990000 金瓜子（约 99 元）：发送感谢回复
+- **银瓜子礼物**或总价值不足的金瓜子礼物：直接忽略，避免免费/小额礼物刷屏
 
 ### 5. 发送限流保护（`sender.py`）
 
@@ -208,7 +208,7 @@ RESPONSE_RULES = {
   │                 └─ 命中 → 限流检查 → 发送回复
   │
 SC 消息  → 始终回复感谢
-礼物消息 → 金瓜子？→ 回复感谢 / 银瓜子？→ 忽略
+礼物消息 → 金瓜子且 >= 990000（约99元）？→ 回复感谢 / 否则 → 忽略
 ```
 
 ## 点歌功能
