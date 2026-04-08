@@ -103,6 +103,7 @@ async def main():
         song_handler=song_handler,
         responder=responder,
         sender=sender,
+        live_room=live_room,
         real_room_id=real_room_id,
         bot_uid=config.BOT_UID,
     )

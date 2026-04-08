@@ -7,6 +7,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -15,6 +16,7 @@ import blivedm
 import blivedm.models.web as web_models
 
 import config
+from song_search import search_qq_music
 
 from responder import KeywordResponseHandler
 from sender import DanmakuSender
@@ -32,20 +34,43 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     """
 
     def __init__(self, song_handler: SongRequestHandler, responder: KeywordResponseHandler,
-                 sender: DanmakuSender, real_room_id: int = 0, bot_uid: int = 0,
+                 sender: DanmakuSender, live_room=None, real_room_id: int = 0, bot_uid: int = 0,
                  msg_callback: Callable[[str, dict], None] = None):
         self._song_handler = song_handler
         self._responder = responder
         self._sender = sender
+        self._live_room = live_room
         self._real_room_id = real_room_id
         self._bot_uid = bot_uid
         self._msg_callback = msg_callback
         self._last_welcome_time: float = 0.0  # timestamp of last welcome sent
         self._welcomed_users: dict[int, float] = {}  # uid -> last welcome timestamp
 
+        # 加载敏感词
+        self._ban_words: set[str] = self._load_ban_words()
+
     def _notify(self, msg_type: str, data: dict):
         if self._msg_callback:
             self._msg_callback(msg_type, data)
+
+    @staticmethod
+    def _load_ban_words() -> set[str]:
+        """从 ban_words.txt 加载敏感词集合，文件缺失或为空则返回空集合。"""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ban_words.txt")
+        words: set[str] = set()
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        words.add(line)
+        except FileNotFoundError:
+            logger.debug("ban_words.txt 不存在，自动禁言功能未启用")
+        except Exception as e:
+            logger.warning("加载 ban_words.txt 失败: %s", e)
+        if words:
+            logger.info("已加载 %d 个敏感词", len(words))
+        return words
 
     def _on_heartbeat(self, client: blivedm.BLiveClient, message: web_models.HeartbeatMessage):
         logger.debug("[%d] 心跳 人气=%d", client.room_id, message.popularity)
@@ -67,6 +92,22 @@ class DanmakuBotHandler(blivedm.BaseHandler):
             "msg": message.msg,
         })
 
+        # ── 自动禁言检查（最优先，不区分是否粉丝） ──
+        if self._ban_words and self._live_room:
+            for word in self._ban_words:
+                if word in message.msg:
+                    logger.info("[禁言] %s (uid=%d) 触发敏感词 '%s': %s",
+                                message.uname, message.uid, word, message.msg)
+                    self._notify("ban", {
+                        "uname": message.uname,
+                        "msg": message.msg,
+                        "word": word,
+                    })
+                    asyncio.create_task(
+                        self._live_room.ban_user(uid=message.uid, hour=config.BAN_DURATION)
+                    )
+                    return  # 禁言后不再处理
+
         # 点歌不过滤自身弹幕，优先处理
         song_info = self._song_handler.parse_request(message.msg)
         if song_info:
@@ -83,6 +124,13 @@ class DanmakuBotHandler(blivedm.BaseHandler):
                 "uname": message.uname,
                 "time": datetime.now().strftime("%H:%M:%S"),
             })
+            return
+
+        # ── 查歌功能 ──
+        if message.msg.startswith(config.SONG_SEARCH_KEYWORD):
+            keyword = message.msg[len(config.SONG_SEARCH_KEYWORD):].strip()
+            if keyword:
+                asyncio.create_task(self._handle_song_search(keyword, client))
             return
 
         # 过滤自己的弹幕，避免死循环
@@ -199,3 +247,18 @@ class DanmakuBotHandler(blivedm.BaseHandler):
             await self._sender.send(text)
         except Exception as e:
             logger.error("发送响应失败: %s", e)
+
+    async def _handle_song_search(self, keyword: str, client: blivedm.BLiveClient):
+        """异步查歌：调用 QQ 音乐搜索并回复结果。"""
+        try:
+            session = client.session
+            results = await search_qq_music(keyword, session)
+            if not results:
+                await self._safe_send("未找到相关歌曲")
+                return
+            parts = [f"{song} - {singer}" if singer else song for song, singer in results]
+            reply = "; ".join(parts)
+            await self._safe_send(reply)
+        except Exception as e:
+            logger.error("[查歌] 查歌服务异常: %s", e)
+            await self._safe_send("查歌服务暂时不可用")

@@ -52,6 +52,7 @@ COLOR_DANMAKU = "#abb2bf"
 COLOR_BORDER = "#2a2a2a"
 COLOR_SUCCESS = "#3fb950"
 COLOR_ERROR = "#f85149"
+COLOR_BAN = "#f85149"
 
 
 class BiliBotGUI:
@@ -232,6 +233,7 @@ class BiliBotGUI:
 
         # 弹幕颜色标签
         self._danmaku_text.tag_configure("danmaku", foreground=COLOR_DANMAKU)
+        self._danmaku_text.tag_configure("ban", foreground=COLOR_BAN)
         self._danmaku_text.tag_configure("sc", foreground=COLOR_SC)
         self._danmaku_text.tag_configure("gift", foreground=COLOR_GIFT)
         self._danmaku_text.tag_configure("song", foreground=COLOR_SONG)
@@ -362,6 +364,7 @@ class BiliBotGUI:
             song_handler=song_handler,
             responder=responder,
             sender=sender,
+            live_room=live_room,
             real_room_id=real_room_id,
             bot_uid=config.BOT_UID,
             msg_callback=self._on_bot_message,
@@ -407,6 +410,8 @@ class BiliBotGUI:
                 self._add_song(data)
             elif msg_type == "sc":
                 self._append_sc(data)
+            elif msg_type == "ban":
+                self._append_ban(data)
             elif msg_type == "gift":
                 self._append_gift(data)
             elif msg_type == "status":
@@ -457,6 +462,16 @@ class BiliBotGUI:
         self._danmaku_text.insert(tk.END, f"[SC ¥{d['price']}] ", "sc")
         self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
         self._danmaku_text.insert(tk.END, f": {d['message']}\n", "sc")
+        self._danmaku_text.see(tk.END)
+        self._danmaku_text.config(state=tk.DISABLED)
+
+    def _append_ban(self, d: dict):
+        ts = datetime.now().strftime('%H:%M:%S')
+        self._danmaku_text.config(state=tk.NORMAL)
+        self._danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
+        self._danmaku_text.insert(tk.END, f"[禁言] ", "ban")
+        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
+        self._danmaku_text.insert(tk.END, f" 触发敏感词 '{d['word']}': {d['msg']}\n", "ban")
         self._danmaku_text.see(tk.END)
         self._danmaku_text.config(state=tk.DISABLED)
 
