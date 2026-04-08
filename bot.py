@@ -7,11 +7,14 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from datetime import datetime
 
 import blivedm
 import blivedm.models.web as web_models
+
+import config
 
 from responder import KeywordResponseHandler
 from sender import DanmakuSender
@@ -37,13 +40,19 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         self._real_room_id = real_room_id
         self._bot_uid = bot_uid
         self._msg_callback = msg_callback
+        self._last_welcome_time: float = 0.0  # timestamp of last welcome sent
+        self._welcomed_users: dict[int, float] = {}  # uid -> last welcome timestamp
 
     def _notify(self, msg_type: str, data: dict):
         if self._msg_callback:
             self._msg_callback(msg_type, data)
 
     def _on_heartbeat(self, client: blivedm.BLiveClient, message: web_models.HeartbeatMessage):
-        logger.debug("[%d] 心跳", client.room_id)
+        logger.debug("[%d] 心跳 人气=%d", client.room_id, message.popularity)
+
+        self._notify("heartbeat", {
+            "popularity": message.popularity,
+        })
 
     def _on_danmaku(self, client: blivedm.BLiveClient, message: web_models.DanmakuMessage):
         logger.info("[弹幕] %s (uid=%s, 房间=%s, 勋章=%s): %s",
@@ -134,6 +143,56 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         )
         if response:
             asyncio.create_task(self._safe_send(response))
+
+    def _on_buy_guard(self, client: blivedm.BLiveClient, message: web_models.GuardBuyMessage):
+        logger.info("[上舰] %s 开通 %s (等级=%d, 数量=%d)",
+                     message.username, message.gift_name, message.guard_level, message.num)
+
+        self._notify("guard", {
+            "uname": message.username,
+            "uid": message.uid,
+            "guard_level": message.guard_level,
+            "gift_name": message.gift_name,
+            "num": message.num,
+            "price": message.price,
+        })
+
+        template = config.GUARD_TEMPLATES.get(message.guard_level)
+        if template:
+            text = template.format(uname=message.username, num=message.num)
+            asyncio.create_task(self._safe_send(text))
+
+    def _on_interact_word_v2(self, client: blivedm.BLiveClient, message: web_models.InteractWordV2Message):
+        # Only handle enter events (msg_type=1)
+        if message.msg_type != 1:
+            return
+
+        logger.info("[进场] %s (uid=%d, msg_type=%d)", message.username, message.uid, message.msg_type)
+
+        self._notify("welcome", {
+            "uname": message.username,
+            "uid": message.uid,
+            "msg_type": message.msg_type,
+        })
+
+        now = time.time()
+
+        # Global cooldown check
+        if now - self._last_welcome_time < config.WELCOME_COOLDOWN_GLOBAL:
+            logger.debug("全局冷却中，跳过欢迎: 距上次 %.1fs", now - self._last_welcome_time)
+            return
+
+        # Per-user cooldown check
+        last_user_welcome = self._welcomed_users.get(message.uid, 0.0)
+        if now - last_user_welcome < config.WELCOME_COOLDOWN_USER * 60:
+            logger.debug("用户冷却中，跳过欢迎: uid=%d", message.uid)
+            return
+
+        # Send welcome
+        text = config.WELCOME_TEMPLATE.format(uname=message.username)
+        self._last_welcome_time = now
+        self._welcomed_users[message.uid] = now
+        asyncio.create_task(self._safe_send(text))
 
     async def _safe_send(self, text: str):
         try:
