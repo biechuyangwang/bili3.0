@@ -55,6 +55,11 @@ class BiliBotGUI:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event = threading.Event()
 
+        # Multi-client state
+        self._active_room_id: int | None = None  # last connected room (for manual danmaku, popularity display)
+        self._room_tasks: dict[int, asyncio.Task] = {}  # track runtime-added room bot tasks
+        self._loop_ready = threading.Event()  # signals bot thread has created its event loop
+
         # 功能开关变量
         self._guard_var = tk.BooleanVar(value=True)
         self._welcome_var = tk.BooleanVar(value=True)
