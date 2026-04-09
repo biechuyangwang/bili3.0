@@ -261,7 +261,7 @@ class BiliBotGUI:
     # ── 连接控制 ─────────────────────────────────────────────
 
     def _toggle(self):
-        if self._bot_thread and self._bot_thread.is_alive():
+        if self._bot_thread and self._bot_thread.is_alive() and self._rooms:
             self._disconnect()
         else:
             self._connect()
@@ -281,6 +281,16 @@ class BiliBotGUI:
             messagebox.showerror("错误", "请先在 config.py 中配置凭据")
             return
 
+        # Duplicate room check
+        if room_id in self._rooms:
+            messagebox.showwarning("提示", f"已连接房间 {room_id}")
+            return
+
+        # Max rooms check
+        if len(self._rooms) >= config.MAX_ROOMS:
+            messagebox.showwarning("提示", f"最多同时连接 {config.MAX_ROOMS} 个房间")
+            return
+
         self._stop_event.clear()
 
         # Create RoomContext + RoomPanel for this room
@@ -291,16 +301,21 @@ class BiliBotGUI:
             on_refresh_ranking=lambda: self._refresh_ranking(room_id),
         )
         self._rooms[room_id] = ctx
+        self._active_room_id = room_id
 
-        # Start bot thread
-        self._bot_thread = threading.Thread(target=self._run_bot, args=(room_id,), daemon=True)
-        self._bot_thread.start()
+        if self._bot_thread and self._bot_thread.is_alive():
+            # Bot thread already running -- wait for loop ready, then schedule room start
+            self._loop_ready.wait(timeout=5)
+            asyncio.run_coroutine_threadsafe(self._start_room_bot(room_id), self._loop)
+        else:
+            # First room -- start bot thread
+            self._loop_ready.clear()
+            self._bot_thread = threading.Thread(target=self._run_bot, daemon=True)
+            self._bot_thread.start()
 
-        self._connect_btn.config(text="断 开", style="Disconnect.TButton")
-        self._status_var.set("连接中...")
+        self._status_var.set(f"连接中... ({len(self._rooms)} 个房间)")
         self._status_label.config(fg=COLOR_SC)
         self._status_dot.itemconfig(self._dot_item, fill=COLOR_SC)
-        self._room_entry.config(state=tk.DISABLED)
 
     def _disconnect(self):
         self._stop_event.set()
@@ -308,25 +323,68 @@ class BiliBotGUI:
         # Stop all room clients
         for room_id, ctx in list(self._rooms.items()):
             if self._loop and ctx.client:
-                asyncio.run_coroutine_threadsafe(
-                    ctx.client.stop_and_close(), self._loop
-                )
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        ctx.client.stop_and_close(), self._loop
+                    )
+                except Exception:
+                    pass
 
         if self._bot_thread:
             self._bot_thread.join(timeout=5)
 
         # Clean up all room panels
-        for ctx in self._rooms.values():
+        for ctx in list(self._rooms.values()):
             if ctx.panel and ctx.panel.pane:
                 ctx.panel.pane.destroy()
 
         self._rooms.clear()
+        self._room_tasks.clear()
+        self._active_room_id = None
 
         self._connect_btn.config(text="连 接", style="Connect.TButton")
         self._status_var.set("未连接")
         self._status_label.config(fg=FG_MUTED)
         self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
+        self._pop_var.set("人气: --")
         self._room_entry.config(state=tk.NORMAL)
+
+    def _disconnect_room(self, room_id: int):
+        """Disconnect a single room. Other rooms continue running."""
+        ctx = self._rooms.get(room_id)
+        if not ctx:
+            return
+
+        # Stop client on bot thread
+        if self._loop and ctx.client and not self._loop.is_closed():
+            future = asyncio.run_coroutine_threadsafe(ctx.client.stop_and_close(), self._loop)
+            try:
+                future.result(timeout=5)
+            except Exception:
+                pass
+
+        # Clean up GUI
+        if ctx.panel and ctx.panel.pane:
+            ctx.panel.pane.destroy()
+
+        # Remove from registry
+        self._rooms.pop(room_id, None)
+        self._room_tasks.pop(room_id, None)
+
+        # Update active room
+        if self._active_room_id == room_id:
+            self._active_room_id = next(iter(self._rooms), None) if self._rooms else None
+
+        # Update status -- button state managed here when last room removed
+        if not self._rooms:
+            self._connect_btn.config(text="连 接", style="Connect.TButton")
+            self._status_var.set("未连接")
+            self._status_label.config(fg=FG_MUTED)
+            self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
+            self._pop_var.set("人气: --")
+        else:
+            count = len(self._rooms)
+            self._status_var.set(f"{count} 个房间已连接")
 
     # ── 后台线程运行机器人 ───────────────────────────────────
 
@@ -472,13 +530,21 @@ class BiliBotGUI:
                     continue
 
                 if msg_type == "danmaku":
+                    if len(self._rooms) > 1:
+                        data = {**data, "msg": f"[{room_id}] {data['msg']}"}
                     panel.append_danmaku(data)
                 elif msg_type == "song":
+                    if len(self._rooms) > 1:
+                        data = {**data, "song": f"[{room_id}] {data['song']}"}
                     panel.append_danmaku_song(data)
                     panel.add_song(data)
                 elif msg_type == "sc":
+                    if len(self._rooms) > 1:
+                        data = {**data, "message": f"[{room_id}] {data['message']}"}
                     panel.append_sc(data)
                 elif msg_type == "ban":
+                    if len(self._rooms) > 1:
+                        data = {**data, "msg": f"[{room_id}] {data['msg']}"}
                     panel.append_ban(data)
                 elif msg_type == "gift":
                     panel.append_gift(data)
@@ -487,14 +553,18 @@ class BiliBotGUI:
                 elif msg_type == "heartbeat":
                     pop = data.get("popularity", 0)
                     ctx.popularity = pop
-                    self._pop_var.set(f"人气: {pop:,}")
+                    if room_id == self._active_room_id:
+                        self._pop_var.set(f"人气: {pop:,}")
                 elif msg_type == "status":
                     text = data["text"]
-                    self._status_var.set(text)
-                    if "已连接" in text:
+                    connected_count = sum(1 for c in self._rooms.values() if c.connected)
+                    if connected_count > 0:
+                        self._status_var.set(f"{connected_count} 个房间已连接")
                         self._status_label.config(fg=COLOR_SUCCESS)
                         self._status_dot.itemconfig(self._dot_item, fill=COLOR_SUCCESS)
+                        self._connect_btn.config(text="断 开", style="Disconnect.TButton")
                     else:
+                        self._status_var.set(text)
                         self._status_label.config(fg=FG_MUTED)
                         self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
                 elif msg_type == "error":
@@ -559,13 +629,12 @@ class BiliBotGUI:
 
     def _refresh_stats_timer(self):
         """Refresh stats for active room every 2 seconds."""
-        # Get active room (Phase 5: single room = first room in dict)
-        for ctx in self._rooms.values():
-            if ctx.panel and ctx.connected:
+        if self._active_room_id:
+            ctx = self._rooms.get(self._active_room_id)
+            if ctx and ctx.panel and ctx.connected:
                 stats = ctx.stats.get_stats()
                 ctx.panel.update_stats_display(stats)
                 ctx.panel.draw_trend_chart(stats)
-                break  # Phase 5: only one room
         self.root.after(2000, self._refresh_stats_timer)
 
     # ── 手动发送弹幕 ─────────────────────────────────────────
@@ -573,10 +642,10 @@ class BiliBotGUI:
     def _send_manual_danmaku(self, room_id: int = None):
         """Send manual danmaku to a specific room."""
         if room_id is None:
-            if not self._rooms:
-                messagebox.showwarning("提示", "请先连接直播间")
-                return
-            room_id = next(iter(self._rooms))
+            room_id = self._active_room_id
+        if room_id is None:
+            messagebox.showwarning("提示", "请先连接直播间")
+            return
 
         ctx = self._rooms.get(room_id)
         if not ctx or not ctx.handler or not self._loop:
