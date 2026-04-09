@@ -364,13 +364,36 @@ class BiliBotGUI:
         if btn:
             btn["dot"].itemconfig(btn["dot_item"], fill=color)
 
+    def _update_top_bar_state(self):
+        """Derive top bar appearance from current room state. Single source of truth."""
+        connected_count = sum(1 for ctx in self._rooms.values() if ctx.connected)
+
+        if not self._rooms:
+            self._connect_btn.config(text="连 接", style="Connect.TButton")
+            self._status_var.set("未连接")
+            self._status_label.config(fg=FG_MUTED)
+            self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
+            self._pop_var.set("人气: --")
+        elif connected_count == 0:
+            self._connect_btn.config(text="添加房间", style="Connect.TButton")
+            self._status_var.set(f"连接中... ({len(self._rooms)} 个房间)")
+            self._status_label.config(fg=COLOR_SC)
+            self._status_dot.itemconfig(self._dot_item, fill=COLOR_SC)
+        else:
+            self._connect_btn.config(text="添加房间", style="Connect.TButton")
+            self._status_var.set(f"已连接 {connected_count} 个房间")
+            self._status_label.config(fg=COLOR_SUCCESS)
+            self._status_dot.itemconfig(self._dot_item, fill=COLOR_SUCCESS)
+
+            if self._active_room_id:
+                ctx = self._rooms.get(self._active_room_id)
+                if ctx:
+                    self._pop_var.set(f"人气: {ctx.popularity:,}")
+
     # ── 连接控制 ─────────────────────────────────────────────
 
     def _toggle(self):
-        if self._bot_thread and self._bot_thread.is_alive() and self._rooms:
-            self._disconnect()
-        else:
-            self._connect()
+        self._connect()
 
     def _connect(self):
         room_str = self._room_var.get().strip()
@@ -399,15 +422,24 @@ class BiliBotGUI:
 
         self._stop_event.clear()
 
+        # Create per-room content frame
+        room_frame = tk.Frame(self._content_area, bg=BG_BASE)
+
         # Create RoomContext + RoomPanel for this room
         ctx = RoomContext(room_id)
         ctx.panel = RoomPanel(
-            parent=self.root,
+            parent=room_frame,
             on_send_callback=lambda: self._send_manual_danmaku(room_id),
             on_refresh_ranking=lambda: self._refresh_ranking(room_id),
         )
+        self._room_frames[room_id] = room_frame
         self._rooms[room_id] = ctx
-        self._active_room_id = room_id
+
+        # Create tab button and select this room
+        self._create_tab_button(room_id)
+        if self._welcome:
+            self._welcome.pack_forget()
+        self._select_room(room_id)
 
         if self._bot_thread and self._bot_thread.is_alive():
             # Bot thread already running -- wait for loop ready, then schedule room start
@@ -419,11 +451,10 @@ class BiliBotGUI:
             self._bot_thread = threading.Thread(target=self._run_bot, daemon=True)
             self._bot_thread.start()
 
-        self._status_var.set(f"连接中... ({len(self._rooms)} 个房间)")
-        self._status_label.config(fg=COLOR_SC)
-        self._status_dot.itemconfig(self._dot_item, fill=COLOR_SC)
+        self._update_top_bar_state()
 
     def _disconnect(self):
+        """App-level shutdown: stop all rooms and clean up."""
         self._stop_event.set()
 
         # Stop all room clients
@@ -439,21 +470,23 @@ class BiliBotGUI:
         if self._bot_thread:
             self._bot_thread.join(timeout=5)
 
-        # Clean up all room panels
-        for ctx in list(self._rooms.values()):
-            if ctx.panel and ctx.panel.pane:
-                ctx.panel.pane.destroy()
+        # Clean up tab infrastructure
+        for tab_btn in self._tab_buttons.values():
+            tab_btn["frame"].destroy()
+        self._tab_buttons.clear()
+        for room_frame in self._room_frames.values():
+            room_frame.destroy()
+        self._room_frames.clear()
 
         self._rooms.clear()
         self._room_tasks.clear()
         self._active_room_id = None
 
-        self._connect_btn.config(text="连 接", style="Connect.TButton")
-        self._status_var.set("未连接")
-        self._status_label.config(fg=FG_MUTED)
-        self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
-        self._pop_var.set("人气: --")
-        self._room_entry.config(state=tk.NORMAL)
+        # Show welcome placeholder
+        if self._welcome:
+            self._welcome.pack(fill=tk.BOTH, expand=True)
+
+        self._update_top_bar_state()
 
     def _disconnect_room(self, room_id: int):
         """Disconnect a single room. Other rooms continue running."""
@@ -469,9 +502,15 @@ class BiliBotGUI:
             except Exception:
                 pass
 
-        # Clean up GUI
-        if ctx.panel and ctx.panel.pane:
-            ctx.panel.pane.destroy()
+        # Destroy content frame (destroys RoomPanel with it)
+        room_frame = self._room_frames.pop(room_id, None)
+        if room_frame:
+            room_frame.destroy()
+
+        # Destroy tab button
+        tab_btn = self._tab_buttons.pop(room_id, None)
+        if tab_btn:
+            tab_btn["frame"].destroy()
 
         # Remove from registry
         self._rooms.pop(room_id, None)
@@ -481,16 +520,13 @@ class BiliBotGUI:
         if self._active_room_id == room_id:
             self._active_room_id = next(iter(self._rooms), None) if self._rooms else None
 
-        # Update status -- button state managed here when last room removed
-        if not self._rooms:
-            self._connect_btn.config(text="连 接", style="Connect.TButton")
-            self._status_var.set("未连接")
-            self._status_label.config(fg=FG_MUTED)
-            self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
-            self._pop_var.set("人气: --")
+        # Show appropriate content
+        if self._active_room_id:
+            self._select_room(self._active_room_id)
         else:
-            count = len(self._rooms)
-            self._status_var.set(f"{count} 个房间已连接")
+            self._welcome.pack(fill=tk.BOTH, expand=True)
+
+        self._update_top_bar_state()
 
     # ── 后台线程运行机器人 ───────────────────────────────────
 
@@ -636,21 +672,13 @@ class BiliBotGUI:
                     continue
 
                 if msg_type == "danmaku":
-                    if len(self._rooms) > 1:
-                        data = {**data, "msg": f"[{room_id}] {data['msg']}"}
                     panel.append_danmaku(data)
                 elif msg_type == "song":
-                    if len(self._rooms) > 1:
-                        data = {**data, "song": f"[{room_id}] {data['song']}"}
                     panel.append_danmaku_song(data)
                     panel.add_song(data)
                 elif msg_type == "sc":
-                    if len(self._rooms) > 1:
-                        data = {**data, "message": f"[{room_id}] {data['message']}"}
                     panel.append_sc(data)
                 elif msg_type == "ban":
-                    if len(self._rooms) > 1:
-                        data = {**data, "msg": f"[{room_id}] {data['msg']}"}
                     panel.append_ban(data)
                 elif msg_type == "gift":
                     panel.append_gift(data)
@@ -662,24 +690,17 @@ class BiliBotGUI:
                     if room_id == self._active_room_id:
                         self._pop_var.set(f"人气: {pop:,}")
                 elif msg_type == "status":
-                    text = data["text"]
                     connected_count = sum(1 for c in self._rooms.values() if c.connected)
                     if connected_count > 0:
-                        self._status_var.set(f"{connected_count} 个房间已连接")
-                        self._status_label.config(fg=COLOR_SUCCESS)
-                        self._status_dot.itemconfig(self._dot_item, fill=COLOR_SUCCESS)
-                        self._connect_btn.config(text="断 开", style="Disconnect.TButton")
+                        self._update_top_bar_state()
+                        self._update_tab_dot(room_id, COLOR_SUCCESS)
                     else:
-                        self._status_var.set(text)
-                        self._status_label.config(fg=FG_MUTED)
-                        self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
+                        self._update_top_bar_state()
+                        self._update_tab_dot(room_id, FG_MUTED)
                 elif msg_type == "error":
                     messagebox.showerror("错误", data["message"])
-                    self._connect_btn.config(text="连 接", style="Connect.TButton")
-                    self._status_var.set("连接失败")
-                    self._status_label.config(fg=COLOR_ERROR)
-                    self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
-                    self._room_entry.config(state=tk.NORMAL)
+                    self._update_tab_dot(room_id, COLOR_ERROR)
+                    self._update_top_bar_state()
                 elif msg_type == "ranking_data":
                     self._update_ranking_display(room_id, data)
                 elif msg_type == "manual_send":
