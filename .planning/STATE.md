@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: — 功能增强 MVP
-status: verifying
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-04-09T16:52:13.939Z"
-last_activity: 2026-04-09
+milestone: v2.0
+milestone_name: "BiliBot v2.0 功能增强"
+status: complete
+stopped_at: Completed 08-01-PLAN.md
+last_updated: "2026-04-10T01:16:44Z"
+last_activity: 2026-04-10
 progress:
-  total_phases: 7
-  completed_phases: 3
-  total_plans: 8
-  completed_plans: 4
-  percent: 50
+  total_phases: 8
+  completed_phases: 8
+  total_plans: 9
+  completed_plans: 9
+  percent: 100
 ---
 
 # Project State
@@ -21,23 +21,23 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09, v2.0 started)
 
 **Core value:** 让主播专注直播内容，机器人自动处理直播间互动（欢迎、感谢、禁言、统计）
-**Current focus:** Phase 07 — Dynamic Room Tabs GUI
+**Current focus:** Phase 08 -- Polish and Error Recovery (COMPLETE)
 
 ## Current Position
 
-Phase: 07 (Dynamic Room Tabs GUI) — EXECUTING
-Plan: 1 of 1
-Status: Phase complete — ready for verification
-Last activity: 2026-04-09
+Phase: 08
+Plan: 08-01 complete
+Status: Phase complete -- v2.0 milestone finished
+Last activity: 2026-04-10
 
-Progress: [████░░░░░░] 50%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 15 (12 v1.0 + 3 v2.0)
-- Sessions: 3
+- Total plans completed: 16 (12 v1.0 + 4 v2.0)
+- Sessions: 4
 
 **By Phase (v2.0):**
 
@@ -45,9 +45,9 @@ Progress: [████░░░░░░] 50%
 |-------|-------|--------|
 | 5. Abstraction Extraction | 2/2 | Complete |
 | 6. Multi-Client Bot Thread | 1/1 | Complete (verified passed 6/6) |
-| 7. Dynamic Room Tabs GUI | 0/? | Not started |
-| 8. Polish and Error Recovery | 0/? | Not started |
-| Phase 07 P01 | 5m | 3 tasks | 1 files |
+| 7. Dynamic Room Tabs GUI | 1/1 | Complete |
+| 8. Polish and Error Recovery | 1/1 | Complete (verified passed 7/7) |
+| Phase 08 P01 | 5m | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -70,6 +70,9 @@ Progress: [████░░░░░░] 50%
 - [Phase 07]: Custom tab bar (tk.Frame) instead of ttk.Notebook for room tabs -- enables Canvas status dots in tab buttons
 - [Phase 07]: _update_top_bar_state as single source of truth for button text, status, dots -- prevents state machine desync
 - [Phase 07]: _toggle always calls _connect -- per-room disconnect is via right-click context menu only
+- [Phase 08]: Error messages shown in per-room danmaku area instead of blocking messagebox for non-blocking error isolation
+- [Phase 08]: Per-room logger uses propagate=False to avoid duplicate entries in root log
+- [Phase 08]: Disconnect closes log handler without deleting log files for audit trail
 
 ### Pending Todos
 
@@ -77,12 +80,11 @@ None.
 
 ### Blockers/Concerns
 
-- Bilibili may rate-limit simultaneous WebSocket connections (unknown limit, test in Phase 6)
-- One Credential sending danmaku to multiple rooms needs verification (Phase 6)
+None -- v2.0 milestone complete.
 
 ## Session Continuity
 
-Last session: 2026-04-09T16:52:13.937Z
-Stopped at: Completed 07-01-PLAN.md
-Next step: `/gsd:plan-phase 5`
+Last session: 2026-04-10T01:16:44Z
+Stopped at: Completed 08-01-PLAN.md
+Next step: v2.0 milestone complete
 Resume file: None

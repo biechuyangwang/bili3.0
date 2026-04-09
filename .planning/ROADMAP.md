@@ -7,81 +7,31 @@
 
 4 phases, 12 plans, 30 requirements — all complete.
 
-Guard thanks, entry welcome, QQ Music search, auto-ban, stats collection, fan ranking, full GUI integration (settings toggles, popularity, ranking tabs, statistics panel with Canvas charts).
+### v2.0 — 多房间同时监控 (2026-04-10)
+[Full roadmap →](milestones/v2.0-ROADMAP.md) | [Requirements →](milestones/v2.0-REQUIREMENTS.md)
 
-### v2.0 — 多房间同时监控 (In Progress)
+4 phases, 5 plans, 23 requirements — all complete.
 
-4 phases, 23 requirements — 2 complete.
-
-Multi-room simultaneous live stream monitoring. Each room gets isolated bot components and its own GUI tab with danmaku view, song list, ranking, and statistics. Rooms are dynamically added/removed at runtime.
+Multi-room monitoring with custom tab bar, per-room logging, error isolation, and room limit enforcement.
 
 ## Phases
 
-- [x] **Phase 5: Abstraction Extraction** - Extract RoomPanel and RoomContext abstractions from singleton GUI state
-- [x] **Phase 6: Multi-Client Bot Thread** - Run multiple BLiveClient instances in a shared asyncio event loop
-- [ ] **Phase 7: Dynamic Room Tabs GUI** - Outer Notebook with per-room panels, add/remove tabs at runtime
-- [ ] **Phase 8: Polish and Error Recovery** - Room limits, per-room logging, error isolation, retry flow
+<details>
+<summary>v1.0 — 功能增强 MVP (Phases 1-4) — SHIPPED 2026-04-09</summary>
 
-## Phase Details
+- [x] Phase 1: 新消息监听 (3/3 plans)
+- [x] Phase 2: 查歌与自动禁言 (2/2 plans)
+- [x] Phase 3: 数据统计与排行 (3/3 plans)
+- [x] Phase 4: GUI 集成 (4/4 plans)
 
-### Phase 5: Abstraction Extraction
-**Goal**: The existing single-room code is reorganized into reusable abstractions (RoomPanel for GUI, RoomContext for bot state) while single-room behavior remains identical.
-**Depends on**: Nothing (foundation phase)
-**Requirements**: MROOM-04, MROOM-05
-**Success Criteria** (what must be TRUE):
-  1. A single room connects and all existing features work exactly as before (danmaku, songs, ranking, stats, settings toggles)
-  2. All per-room state (handler, stats, fan ranking, sender, GUI widgets) is contained in a RoomContext/RoomPanel class, not loose attributes on BiliBotGUI
-  3. One shared aiohttp.ClientSession and one asyncio event loop are explicitly managed and passed to room components
-**Plans**: 2 plans
+</details>
 
-Plans:
-- [x] 05-01-PLAN.md — Create RoomPanel (GUI widgets) and RoomContext (bot state) abstraction classes
-- [x] 05-02-PLAN.md — Refactor gui.py to use RoomContext/RoomPanel, verify single-room behavior unchanged
+<details>
+<summary>v2.0 — 多房间同时监控 (Phases 5-8) — SHIPPED 2026-04-10</summary>
 
-### Phase 6: Multi-Client Bot Thread
-**Goal**: The bot daemon thread can manage multiple simultaneous BLiveClient connections, each independently startable and stoppable.
-**Depends on**: Phase 5
-**Requirements**: MROOM-01, MROOM-02, MROOM-03
-**Success Criteria** (what must be TRUE):
-  1. User can connect to 2+ rooms simultaneously and receive danmaku from all rooms
-  2. User can add a new room connection while existing rooms continue receiving messages uninterrupted
-  3. User can disconnect one room without affecting other rooms' connections or message flow
-**Plans**: 1 plan
+- [x] Phase 5: Abstraction Extraction (2/2 plans)
+- [x] Phase 6: Multi-Client Bot Thread (1/1 plan)
+- [x] Phase 7: Dynamic Room Tabs GUI (1/1 plan)
+- [x] Phase 8: Polish and Error Recovery (1/1 plan)
 
-Plans:
-- [x] 06-01-PLAN.md — Add MAX_ROOMS config and rewrite bot thread for multi-client lifecycle with runtime add/disconnect (verified passed 6/6)
-
-### Phase 7: Dynamic Room Tabs GUI
-**Goal**: Users see one tab per connected room in a custom tab bar, with each tab containing the full panel set and independently scrollable content.
-**Depends on**: Phase 6
-**Requirements**: TABS-01, TABS-02, TABS-03, TABS-04, TABS-05, GUI-01, GUI-02, GUI-03, GUI-04, GUI-05, GUI-06
-**Success Criteria** (what must be TRUE):
-  1. User can switch between room tabs and see each room's danmaku, song list, ranking, and statistics independently
-  2. Switching away from a tab and back preserves that room's scroll position and message history
-  3. Each tab label shows the room number and a colored connection status dot
-  4. User can close a room tab, which disconnects that room and removes its tab
-  5. Top bar shows total connected room count and highlights the active room
-**Plans**: 1 plan
-
-Plans:
-- [x] 07-01-PLAN.md — Custom tab bar with status dots, welcome placeholder, per-room content frames, multi-tab connect/disconnect
-
-### Phase 8: Polish and Error Recovery
-**Goal**: Multi-room operation is production-ready with per-room logging, error isolation, and resource limits.
-**Depends on**: Phase 7
-**Requirements**: ERR-01, ERR-02, ERR-03, ERR-04, LOG-01, LOG-02, LOG-03
-**Success Criteria** (what must be TRUE):
-  1. One room disconnecting or crashing shows a red error indicator on its tab while all other rooms continue normally
-  2. Each room's danmaku log writes to logs/{room_id}/danmaku.log with daily rotation and 30-day retention
-  3. User can retry a failed room by closing its tab and re-adding the room number
-  4. Application refuses to add rooms beyond the configured maximum (default 5) and shows a message explaining the limit
-**Plans**: TBD
-
-## Progress
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 5. Abstraction Extraction | 2/2 | Complete | 2026-04-09 |
-| 6. Multi-Client Bot Thread | 1/1 | Complete | 2026-04-09 |
-| 7. Dynamic Room Tabs GUI | 0/1 | Not started | - |
-| 8. Polish and Error Recovery | 0/? | Not started | - |
+</details>
