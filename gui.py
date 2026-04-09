@@ -330,20 +330,21 @@ class BiliBotGUI:
 
     # ── 后台线程运行机器人 ───────────────────────────────────
 
-    def _run_bot(self, room_id: int):
+    def _run_bot(self):
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._loop_ready.set()  # signal GUI thread that loop is ready
         try:
-            self._loop.run_until_complete(self._bot_main(room_id))
+            self._loop.run_until_complete(self._bot_main())
         except Exception as e:
-            # Put error on any available room's queue
             for ctx in self._rooms.values():
                 ctx.msg_queue.put(("error", {"message": str(e)}))
                 break
+        finally:
+            self._loop = None
 
-    async def _bot_main(self, room_id: int):
-        """Create shared session, then start the single room bot."""
-        # Create shared session INSIDE the event loop (critical for blivedm)
+    async def _bot_main(self):
+        """Create shared session, start initial room(s), manage lifecycle."""
         cookies = http.cookies.SimpleCookie()
         cookies["SESSDATA"] = config.SESSDATA
         cookies["SESSDATA"]["domain"] = "bilibili.com"
@@ -351,77 +352,103 @@ class BiliBotGUI:
         self._shared_session = aiohttp.ClientSession()
         self._shared_session.cookie_jar.update_cookies(cookies)
 
-        # Start the single room (Phase 5)
-        await self._start_room_bot(room_id)
+        try:
+            # Start all rooms that exist at thread start time
+            tasks = []
+            for room_id in list(self._rooms):
+                tasks.append(asyncio.create_task(self._start_room_bot(room_id)))
 
-        # Cleanup
-        for ctx in self._rooms.values():
-            if ctx.client:
-                await ctx.client.stop_and_close()
-        if self._shared_session:
-            await self._shared_session.close()
-            self._shared_session = None
+            # Block until all initial tasks finish (they run until stopped)
+            # return_exceptions=True prevents one room's failure from cancelling others
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Keep thread alive for runtime-added rooms
+            while self._room_tasks and not self._stop_event.is_set():
+                await asyncio.sleep(0.5)
+
+        finally:
+            # Close any remaining clients (safety net)
+            for ctx in list(self._rooms.values()):
+                if ctx.client and ctx.client.is_running:
+                    try:
+                        await ctx.client.stop_and_close()
+                    except Exception:
+                        pass
+            if self._shared_session:
+                await self._shared_session.close()
+                self._shared_session = None
 
     async def _start_room_bot(self, room_id: int):
         """Initialize bot components for one room and run until disconnect."""
         ctx = self._rooms.get(room_id)
         if not ctx:
             return
+        try:
+            credential = Credential(
+                sessdata=config.SESSDATA,
+                bili_jct=config.BILI_JCT,
+                buvid3=config.BUVID3,
+            )
 
-        credential = Credential(
-            sessdata=config.SESSDATA,
-            bili_jct=config.BILI_JCT,
-            buvid3=config.BUVID3,
-        )
+            song_handler = SongRequestHandler(
+                keyword=config.SONG_REQUEST_KEYWORD,
+                source=config.SONG_REQUEST_SOURCE,
+            )
+            responder = KeywordResponseHandler(
+                rules=config.RESPONSE_RULES,
+                sc_template=config.SC_THANK_YOU_TEMPLATE,
+            )
 
-        song_handler = SongRequestHandler(
-            keyword=config.SONG_REQUEST_KEYWORD,
-            source=config.SONG_REQUEST_SOURCE,
-        )
-        responder = KeywordResponseHandler(
-            rules=config.RESPONSE_RULES,
-            sc_template=config.SC_THANK_YOU_TEMPLATE,
-        )
+            ctx.sender = DanmakuSender(
+                room_display_id=room_id,
+                credential=credential,
+                cooldown=config.SEND_COOLDOWN,
+            )
 
-        ctx.sender = DanmakuSender(
-            room_display_id=room_id,
-            credential=credential,
-            cooldown=config.SEND_COOLDOWN,
-        )
+            ctx.live_room = LiveRoom(room_display_id=room_id, credential=credential)
+            room_info = await ctx.live_room.get_room_play_info()
+            ctx.real_room_id = room_info["room_id"]
 
-        ctx.live_room = LiveRoom(room_display_id=room_id, credential=credential)
-        room_info = await ctx.live_room.get_room_play_info()
-        ctx.real_room_id = room_info["room_id"]
+            ctx.handler = DanmakuBotHandler(
+                song_handler=song_handler,
+                responder=responder,
+                sender=ctx.sender,
+                live_room=ctx.live_room,
+                real_room_id=ctx.real_room_id,
+                bot_uid=config.BOT_UID,
+                msg_callback=lambda msg_type, data, rid=room_id: self._on_room_message(rid, msg_type, data),
+                stats=ctx.stats,
+            )
 
-        ctx.handler = DanmakuBotHandler(
-            song_handler=song_handler,
-            responder=responder,
-            sender=ctx.sender,
-            live_room=ctx.live_room,
-            real_room_id=ctx.real_room_id,
-            bot_uid=config.BOT_UID,
-            msg_callback=lambda msg_type, data, rid=room_id: self._on_room_message(rid, msg_type, data),
-            stats=ctx.stats,
-        )
+            ctx.fan_ranking = FanRankingService(ctx.live_room)
 
-        ctx.fan_ranking = FanRankingService(ctx.live_room)
+            # Sync feature toggles
+            ctx.handler.guard_enabled = self._guard_var.get()
+            ctx.handler.welcome_enabled = self._welcome_var.get()
+            ctx.handler.auto_ban_enabled = self._auto_ban_var.get()
 
-        # Sync feature toggles
-        ctx.handler.guard_enabled = self._guard_var.get()
-        ctx.handler.welcome_enabled = self._welcome_var.get()
-        ctx.handler.auto_ban_enabled = self._auto_ban_var.get()
+            ctx.client = blivedm.BLiveClient(room_id=room_id, session=self._shared_session)
+            ctx.client.set_handler(ctx.handler)
+            ctx.client.start()
 
-        ctx.client = blivedm.BLiveClient(room_id=room_id, session=self._shared_session)
-        ctx.client.set_handler(ctx.handler)
-        ctx.client.start()
+            # Track this room's task
+            task = asyncio.current_task()
+            if task:
+                self._room_tasks[room_id] = task
 
-        ctx.msg_queue.put(("status", {"text": f"已连接房间 {room_id}"}))
-        ctx.connected = True
+            ctx.msg_queue.put(("status", {"text": f"已连接房间 {room_id}"}))
+            ctx.connected = True
 
-        await ctx.client.join()
+            await ctx.client.join()
 
-        ctx.connected = False
-        ctx.msg_queue.put(("status", {"text": "已断开"}))
+            ctx.connected = False
+            self._room_tasks.pop(room_id, None)
+            ctx.msg_queue.put(("status", {"text": f"房间 {room_id} 已断开"}))
+        except Exception as e:
+            ctx.connected = False
+            self._room_tasks.pop(room_id, None)
+            ctx.msg_queue.put(("error", {"message": f"房间 {room_id} 连接失败: {e}"}))
 
     def _on_room_message(self, room_id: int, msg_type: str, data: dict):
         """Bot thread callback -- route message to correct room's queue."""
