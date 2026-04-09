@@ -60,6 +60,11 @@ class BiliBotGUI:
         self._room_tasks: dict[int, asyncio.Task] = {}  # track runtime-added room bot tasks
         self._loop_ready = threading.Event()  # signals bot thread has created its event loop
 
+        # Multi-room tab state
+        self._tab_buttons: dict[int, dict] = {}  # room_id -> {frame, dot, dot_item, label}
+        self._room_frames: dict[int, tk.Frame] = {}  # room_id -> content Frame
+        self._welcome: tk.Frame | None = None
+
         # 功能开关变量
         self._guard_var = tk.BooleanVar(value=True)
         self._welcome_var = tk.BooleanVar(value=True)
@@ -237,9 +242,19 @@ class BiliBotGUI:
         # 分割线
         tk.Frame(self.root, bg=COLOR_BORDER, height=1).pack(fill=tk.X)
 
-        # ── 主区域：由 RoomPanel 创建 ──
-        # (No per-room widgets created here. RoomPanel is created in _connect when a room connects.)
-        # For Phase 5 single-room, the panel will pack directly into self.root.
+        # ── 自定义标签栏 ──
+        self._tab_bar = tk.Frame(self.root, bg=BG_SURFACE)
+        self._tab_bar.pack(fill=tk.X)
+
+        # 标签栏下分割线
+        tk.Frame(self.root, bg=COLOR_BORDER, height=1).pack(fill=tk.X)
+
+        # ── 内容区域 ──
+        self._content_area = tk.Frame(self.root, bg=BG_BASE)
+        self._content_area.pack(fill=tk.BOTH, expand=True)
+
+        # 欢迎占位（初始状态）
+        self._build_welcome()
 
     # ── 功能开关回调 ────────────────────────────────────────
 
@@ -257,6 +272,97 @@ class BiliBotGUI:
         for ctx in self._rooms.values():
             if ctx.handler:
                 ctx.handler.auto_ban_enabled = self._auto_ban_var.get()
+
+    # ── 标签栏与欢迎占位 ─────────────────────────────────────
+
+    def _build_welcome(self):
+        """Create centered welcome placeholder shown when no rooms connected."""
+        self._welcome = tk.Frame(self._content_area, bg=BG_BASE)
+        tk.Label(self._welcome, text="BiliBot",
+                 font=("Microsoft YaHei UI", 20, "bold"),
+                 bg=BG_BASE, fg=FG_PRIMARY).place(relx=0.5, rely=0.4, anchor="center")
+        tk.Label(self._welcome, text="输入房间号并点击连接以开始",
+                 font=("Microsoft YaHei UI", 10),
+                 bg=BG_BASE, fg=FG_MUTED).place(relx=0.5, rely=0.5, anchor="center")
+        self._welcome.pack(fill=tk.BOTH, expand=True)
+
+    def _create_tab_button(self, room_id: int):
+        """Create a custom tab button with status dot for a room."""
+        tab_btn = tk.Frame(self._tab_bar, bg=BG_ELEVATED, padx=12, pady=6, cursor="hand2")
+        tab_btn.pack(side=tk.LEFT, padx=(0, 2))
+
+        dot_canvas = tk.Canvas(tab_btn, width=8, height=8, bg=BG_ELEVATED, highlightthickness=0)
+        dot_canvas.pack(side=tk.LEFT, padx=(0, 6))
+        dot_item = dot_canvas.create_oval(0, 0, 8, 8, fill=COLOR_SC, outline="")
+
+        lbl = tk.Label(tab_btn, text=f"房间 {room_id}",
+                       bg=BG_ELEVATED, fg=FG_PRIMARY,
+                       font=("Microsoft YaHei UI", 10))
+        lbl.pack(side=tk.LEFT)
+
+        self._tab_buttons[room_id] = {"frame": tab_btn, "dot": dot_canvas, "dot_item": dot_item, "label": lbl}
+
+        # Bind click for tab selection
+        select_cb = lambda e, rid=room_id: self._select_room(rid)
+        tab_btn.bind("<Button-1>", select_cb)
+        dot_canvas.bind("<Button-1>", select_cb)
+        lbl.bind("<Button-1>", select_cb)
+
+        # Bind right-click for disconnect menu
+        menu_cb = lambda e, rid=room_id: self._show_tab_menu(e, rid)
+        tab_btn.bind("<Button-3>", menu_cb)
+        dot_canvas.bind("<Button-3>", menu_cb)
+        lbl.bind("<Button-3>", menu_cb)
+
+    def _select_room(self, room_id: int):
+        """Switch to a room's content frame and update tab bar selection."""
+        if room_id == self._active_room_id:
+            return
+
+        # Hide welcome if visible
+        if self._welcome:
+            self._welcome.pack_forget()
+
+        # Show/hide room frames
+        for rid, frame in self._room_frames.items():
+            if rid == room_id:
+                frame.pack(fill=tk.BOTH, expand=True)
+            else:
+                frame.pack_forget()
+
+        self._active_room_id = room_id
+        self._update_tab_bar_selection(room_id)
+
+        # Update top bar popularity for selected room
+        ctx = self._rooms.get(room_id)
+        if ctx:
+            self._pop_var.set(f"人气: {ctx.popularity:,}")
+
+    def _update_tab_bar_selection(self, active_room_id: int):
+        """Update visual state of tab buttons for active vs inactive."""
+        for room_id, btn in self._tab_buttons.items():
+            if room_id == active_room_id:
+                bg, fg = BG_BASE, FG_PRIMARY
+            else:
+                bg, fg = BG_ELEVATED, FG_SECONDARY
+            btn["frame"].config(bg=bg)
+            btn["dot"].config(bg=bg)
+            btn["label"].config(bg=bg, fg=fg)
+
+    def _show_tab_menu(self, event, room_id: int):
+        """Show right-click context menu on tab to disconnect room."""
+        menu = tk.Menu(self.root, tearoff=0,
+                       bg=BG_ELEVATED, fg=FG_PRIMARY,
+                       activebackground=BG_HOVER, activeforeground=FG_PRIMARY,
+                       font=("Microsoft YaHei UI", 10))
+        menu.add_command(label="断开连接", command=lambda: self._disconnect_room(room_id))
+        menu.post(event.x_root, event.y_root)
+
+    def _update_tab_dot(self, room_id: int, color: str):
+        """Update the status dot color for a room's tab button."""
+        btn = self._tab_buttons.get(room_id)
+        if btn:
+            btn["dot"].itemconfig(btn["dot_item"], fill=color)
 
     # ── 连接控制 ─────────────────────────────────────────────
 
