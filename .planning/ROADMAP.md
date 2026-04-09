@@ -64,7 +64,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 07-01-PLAN.md — Custom tab bar with status dots, welcome placeholder, per-room content frames, multi-tab connect/disconnect
+- [x] 07-01-PLAN.md — Custom tab bar with status dots, welcome placeholder, per-room content frames, multi-tab connect/disconnect
 
 ### Phase 8: Polish and Error Recovery
 **Goal**: Multi-room operation is production-ready with per-room logging, error isolation, and resource limits.

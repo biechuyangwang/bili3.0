@@ -15,20 +15,20 @@
 
 ### Room Tab Switching
 
-- [ ] **TABS-01**: User can switch between connected rooms via outer Notebook tabs
-- [ ] **TABS-02**: Each room tab contains the full panel set: danmaku view, song list, ranking, statistics
-- [ ] **TABS-03**: Switching tabs preserves each room's scroll position, stats state, and message history
-- [ ] **TABS-04**: Tab label shows room number and connection status indicator (colored dot)
-- [ ] **TABS-05**: User can close a room tab (disconnects that room)
+- [x] **TABS-01**: User can switch between connected rooms via outer Notebook tabs
+- [x] **TABS-02**: Each room tab contains the full panel set: danmaku view, song list, ranking, statistics
+- [x] **TABS-03**: Switching tabs preserves each room's scroll position, stats state, and message history
+- [x] **TABS-04**: Tab label shows room number and connection status indicator (colored dot)
+- [x] **TABS-05**: User can close a room tab (disconnects that room)
 
 ### Per-Room GUI
 
-- [ ] **GUI-01**: Each room has its own danmaku text area with color-coded messages
-- [ ] **GUI-02**: Each room has its own song request treeview
-- [ ] **GUI-03**: Each room has its own ranking tab (medal + guard)
-- [ ] **GUI-04**: Each room has its own statistics panel (counts, revenue, trend chart)
-- [ ] **GUI-05**: Each room has its own manual danmaku send bar
-- [ ] **GUI-06**: Top bar shows aggregated status (total rooms connected, active room highlighted)
+- [x] **GUI-01**: Each room has its own danmaku text area with color-coded messages
+- [x] **GUI-02**: Each room has its own song request treeview
+- [x] **GUI-03**: Each room has its own ranking tab (medal + guard)
+- [x] **GUI-04**: Each room has its own statistics panel (counts, revenue, trend chart)
+- [x] **GUI-05**: Each room has its own manual danmaku send bar
+- [x] **GUI-06**: Top bar shows aggregated status (total rooms connected, active room highlighted)
 
 ### Per-Room Logging
 
@@ -72,17 +72,17 @@ Deferred to future milestone.
 | MROOM-03 | Phase 6 | Complete |
 | MROOM-04 | Phase 5 | Complete |
 | MROOM-05 | Phase 5 | Complete |
-| TABS-01 | Phase 7 | Pending |
-| TABS-02 | Phase 7 | Pending |
-| TABS-03 | Phase 7 | Pending |
-| TABS-04 | Phase 7 | Pending |
-| TABS-05 | Phase 7 | Pending |
-| GUI-01 | Phase 7 | Pending |
-| GUI-02 | Phase 7 | Pending |
-| GUI-03 | Phase 7 | Pending |
-| GUI-04 | Phase 7 | Pending |
-| GUI-05 | Phase 7 | Pending |
-| GUI-06 | Phase 7 | Pending |
+| TABS-01 | Phase 7 | Complete |
+| TABS-02 | Phase 7 | Complete |
+| TABS-03 | Phase 7 | Complete |
+| TABS-04 | Phase 7 | Complete |
+| TABS-05 | Phase 7 | Complete |
+| GUI-01 | Phase 7 | Complete |
+| GUI-02 | Phase 7 | Complete |
+| GUI-03 | Phase 7 | Complete |
+| GUI-04 | Phase 7 | Complete |
+| GUI-05 | Phase 7 | Complete |
+| GUI-06 | Phase 7 | Complete |
 | LOG-01 | Phase 8 | Pending |
 | LOG-02 | Phase 8 | Pending |
 | LOG-03 | Phase 8 | Pending |
