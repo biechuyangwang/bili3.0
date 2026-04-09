@@ -14,11 +14,11 @@ from datetime import datetime
 from tkinter import ttk
 from typing import Callable
 
-from gui import (ACCENT, ACCENT_HOVER, BG_BASE, BG_ELEVATED, BG_INPUT,
-                 BG_SURFACE, COLOR_BORDER, COLOR_BAN, COLOR_DANMAKU,
-                 COLOR_ERROR, COLOR_GIFT, COLOR_GUARD, COLOR_GUARD_LEVEL,
-                 COLOR_SC, COLOR_SONG, COLOR_SUCCESS, FG_MUTED, FG_PRIMARY,
-                 FG_SECONDARY, GUARD_NAMES, BG_HOVER)
+from theme import (ACCENT, ACCENT_HOVER, BG_BASE, BG_ELEVATED, BG_INPUT,
+                   BG_SURFACE, COLOR_BORDER, COLOR_BAN, COLOR_DANMAKU,
+                   COLOR_ERROR, COLOR_GIFT, COLOR_GUARD, COLOR_GUARD_LEVEL,
+                   COLOR_SC, COLOR_SONG, COLOR_SUCCESS, FG_MUTED, FG_PRIMARY,
+                   FG_SECONDARY, GUARD_NAMES, BG_HOVER)
 
 
 class RoomPanel:

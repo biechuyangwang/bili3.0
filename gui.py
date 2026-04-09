@@ -14,7 +14,6 @@ import os
 import queue
 import threading
 import tkinter as tk
-from datetime import datetime
 from tkinter import messagebox, ttk
 
 import aiohttp
@@ -26,37 +25,15 @@ import config
 from bot import DanmakuBotHandler
 from fan_ranking import FanRankingService
 from responder import KeywordResponseHandler
+from room_context import RoomContext
+from room_panel import RoomPanel
 from sender import DanmakuSender
 from song_request import SongRequestHandler
-from stats_collector import StatsCollector
-
-# ── 暗色主题色板 (Vercel/Linear 风格) ──────────────────────────
-# 背景
-BG_BASE = "#0a0a0a"
-BG_SURFACE = "#141414"
-BG_ELEVATED = "#1a1a1a"
-BG_INPUT = "#1e1e1e"
-BG_HOVER = "#262626"
-# 文字
-FG_PRIMARY = "#ededed"
-FG_SECONDARY = "#888888"
-FG_MUTED = "#555555"
-# 强调色 (偏暖粉红，避免通用蓝)
-ACCENT = "#e44d72"
-ACCENT_HOVER = "#d63d62"
-ACCENT_DISABLED = "#5c2230"
-# 语义色
-COLOR_SONG = "#61afef"
-COLOR_SC = "#e5c07b"
-COLOR_GIFT = "#98c379"
-COLOR_DANMAKU = "#abb2bf"
-COLOR_BORDER = "#2a2a2a"
-COLOR_SUCCESS = "#3fb950"
-COLOR_ERROR = "#f85149"
-COLOR_BAN = "#f85149"
-COLOR_GUARD = "#c678dd"
-COLOR_GUARD_LEVEL = {1: "#e06c75", 2: "#d19a66", 3: "#61afef"}
-GUARD_NAMES = {1: "总督", 2: "提督", 3: "舰长"}
+from theme import (ACCENT, ACCENT_DISABLED, ACCENT_HOVER, BG_BASE, BG_ELEVATED,
+                   BG_HOVER, BG_INPUT, BG_SURFACE, COLOR_BAN, COLOR_BORDER,
+                   COLOR_DANMAKU, COLOR_ERROR, COLOR_GIFT, COLOR_GUARD, COLOR_SC,
+                   COLOR_SONG, COLOR_SUCCESS, FG_MUTED, FG_PRIMARY, FG_SECONDARY,
+                   GUARD_NAMES)
 
 
 class BiliBotGUI:
@@ -70,24 +47,18 @@ class BiliBotGUI:
         # 去掉默认 tk 背景，使用暗色
         self._setup_styles()
 
+        # Shared infrastructure
+        self._shared_session: aiohttp.ClientSession | None = None
+        self._rooms: dict[int, RoomContext] = {}
+
         self._bot_thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._client: blivedm.BLiveClient | None = None
-        self._session: aiohttp.ClientSession | None = None
         self._stop_event = threading.Event()
-        self._msg_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
-        self._stats = StatsCollector()
-        self._handler: DanmakuBotHandler | None = None
-        self._live_room: LiveRoom | None = None
-        self._fan_ranking: FanRankingService | None = None
 
         # 功能开关变量
         self._guard_var = tk.BooleanVar(value=True)
         self._welcome_var = tk.BooleanVar(value=True)
         self._auto_ban_var = tk.BooleanVar(value=True)
-
-        # 人气值
-        self._popularity = 0
 
         self._build_ui()
         self._poll_queue()
@@ -261,249 +232,26 @@ class BiliBotGUI:
         # 分割线
         tk.Frame(self.root, bg=COLOR_BORDER, height=1).pack(fill=tk.X)
 
-        # ── 主区域：左右分栏 ──
-        pane = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
-        pane.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
-
-        # 左侧：弹幕区
-        danmaku_outer = tk.Frame(pane, bg=BG_BASE)
-        pane.add(danmaku_outer, weight=3)
-
-        # 弹幕标题栏
-        danmaku_header = tk.Frame(danmaku_outer, bg=BG_BASE, padx=12, pady=10)
-        danmaku_header.pack(fill=tk.X)
-        tk.Label(danmaku_header, text="弹幕消息",
-                 font=("Microsoft YaHei UI", 11, "bold"),
-                 bg=BG_BASE, fg=FG_PRIMARY).pack(side=tk.LEFT)
-
-        # 弹幕文本区
-        danmaku_text_frame = tk.Frame(danmaku_outer, bg=BG_BASE, padx=12, pady=12)
-        danmaku_text_frame.pack(fill=tk.BOTH, expand=True)
-
-        self._danmaku_text = tk.Text(
-            danmaku_text_frame, wrap=tk.WORD, state=tk.DISABLED,
-            font=("Consolas", 10), bg=BG_ELEVATED, fg=COLOR_DANMAKU,
-            insertbackground=FG_PRIMARY, selectbackground="#2a3a5c",
-            padx=10, pady=8, borderwidth=0, relief="flat",
-            highlightthickness=1, highlightcolor=COLOR_BORDER,
-            highlightbackground=COLOR_BORDER,
-        )
-        danmaku_sb = ttk.Scrollbar(danmaku_text_frame, orient=tk.VERTICAL,
-                                    command=self._danmaku_text.yview,
-                                    style="Dark.Vertical.TScrollbar")
-        self._danmaku_text.configure(yscrollcommand=danmaku_sb.set)
-        self._danmaku_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        danmaku_sb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # 弹幕颜色标签
-        self._danmaku_text.tag_configure("danmaku", foreground=COLOR_DANMAKU)
-        self._danmaku_text.tag_configure("ban", foreground=COLOR_BAN)
-        self._danmaku_text.tag_configure("sc", foreground=COLOR_SC)
-        self._danmaku_text.tag_configure("gift", foreground=COLOR_GIFT)
-        self._danmaku_text.tag_configure("song", foreground=COLOR_SONG)
-        self._danmaku_text.tag_configure("guard", foreground=COLOR_GUARD)
-        self._danmaku_text.tag_configure("timestamp", foreground=FG_MUTED,
-                                          font=("Consolas", 9))
-        self._danmaku_text.tag_configure("uname", foreground="#c678dd")
-
-        # 右侧：Notebook (点歌 / 排行 / 统计)
-        right_outer = tk.Frame(pane, bg=BG_BASE)
-        pane.add(right_outer, weight=2)
-
-        self._notebook = ttk.Notebook(right_outer, style="Dark.TNotebook")
-        self._notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-
-        # Tab 1: 点歌列表
-        song_tab = tk.Frame(self._notebook, bg=BG_BASE)
-        self._notebook.add(song_tab, text=" 点歌 ")
-        self._build_song_tab(song_tab)
-
-        # Tab 2: 排行榜
-        rank_tab = tk.Frame(self._notebook, bg=BG_BASE)
-        self._notebook.add(rank_tab, text=" 排行 ")
-        self._build_rank_tab(rank_tab)
-
-        # Tab 3: 统计
-        stats_tab = tk.Frame(self._notebook, bg=BG_BASE)
-        self._notebook.add(stats_tab, text=" 统计 ")
-        self._build_stats_tab(stats_tab)
-
-    # ── Tab 构建 ──────────────────────────────────────────
-
-    def _build_song_tab(self, parent):
-        """点歌列表 tab"""
-        cols = ("song", "uname", "time")
-        self._song_tree = ttk.Treeview(parent, columns=cols,
-                                        show="headings", height=20,
-                                        style="Song.Treeview")
-        self._song_tree.heading("song", text="歌曲")
-        self._song_tree.heading("uname", text="点歌人")
-        self._song_tree.heading("time", text="时间")
-        self._song_tree.column("song", width=160, minwidth=80)
-        self._song_tree.column("uname", width=100, minwidth=60)
-        self._song_tree.column("time", width=70, minwidth=50, anchor=tk.CENTER)
-
-        song_sb = ttk.Scrollbar(parent, orient=tk.VERTICAL,
-                                 command=self._song_tree.yview,
-                                 style="Dark.Vertical.TScrollbar")
-        self._song_tree.configure(yscrollcommand=song_sb.set)
-        self._song_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        song_sb.pack(side=tk.RIGHT, fill=tk.Y)
-
-    def _build_rank_tab(self, parent):
-        """排行榜 tab - 粉丝勋章 / 大航海"""
-        # 子 tab
-        self._rank_notebook = ttk.Notebook(parent, style="Dark.TNotebook")
-        self._rank_notebook.pack(fill=tk.BOTH, expand=True)
-
-        # 粉丝勋章排行
-        medal_frame = tk.Frame(self._rank_notebook, bg=BG_BASE)
-        self._rank_notebook.add(medal_frame, text=" 粉丝勋章 ")
-
-        medal_cols = ("rank", "uname", "medal_level")
-        self._medal_tree = ttk.Treeview(medal_frame, columns=medal_cols,
-                                         show="headings", style="Song.Treeview")
-        self._medal_tree.heading("rank", text="#")
-        self._medal_tree.heading("uname", text="用户")
-        self._medal_tree.heading("medal_level", text="勋章等级")
-        self._medal_tree.column("rank", width=40, minwidth=30, anchor=tk.CENTER)
-        self._medal_tree.column("uname", width=120, minwidth=80)
-        self._medal_tree.column("medal_level", width=80, minwidth=50, anchor=tk.CENTER)
-
-        medal_sb = ttk.Scrollbar(medal_frame, orient=tk.VERTICAL,
-                                  command=self._medal_tree.yview,
-                                  style="Dark.Vertical.TScrollbar")
-        self._medal_tree.configure(yscrollcommand=medal_sb.set)
-        self._medal_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        medal_sb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # 大航海排行
-        guard_frame = tk.Frame(self._rank_notebook, bg=BG_BASE)
-        self._rank_notebook.add(guard_frame, text=" 大航海 ")
-
-        guard_cols = ("rank", "uname", "guard_level")
-        self._guard_tree = ttk.Treeview(guard_frame, columns=guard_cols,
-                                         show="headings", style="Song.Treeview")
-        self._guard_tree.heading("rank", text="#")
-        self._guard_tree.heading("uname", text="用户")
-        self._guard_tree.heading("guard_level", text="等级")
-        self._guard_tree.column("rank", width=40, minwidth=30, anchor=tk.CENTER)
-        self._guard_tree.column("uname", width=120, minwidth=80)
-        self._guard_tree.column("guard_level", width=80, minwidth=50, anchor=tk.CENTER)
-
-        guard_sb = ttk.Scrollbar(guard_frame, orient=tk.VERTICAL,
-                                  command=self._guard_tree.yview,
-                                  style="Dark.Vertical.TScrollbar")
-        self._guard_tree.configure(yscrollcommand=guard_sb.set)
-        self._guard_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        guard_sb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # 刷新按钮
-        btn_frame = tk.Frame(parent, bg=BG_BASE, padx=8, pady=8)
-        btn_frame.pack(fill=tk.X)
-
-        refresh_btn = tk.Button(btn_frame, text="刷新排行", font=("Microsoft YaHei UI", 9),
-                                bg=BG_SURFACE, fg=FG_PRIMARY, activebackground=BG_HOVER,
-                                activeforeground=FG_PRIMARY, relief="flat", padx=12, pady=4,
-                                command=self._refresh_ranking)
-        refresh_btn.pack(side=tk.RIGHT)
-
-    def _build_stats_tab(self, parent):
-        """统计面板 - 实时计数 + 收入 + 排行 + 趋势图"""
-        # 上半部分: 数字面板
-        top_frame = tk.Frame(parent, bg=BG_BASE, padx=12, pady=8)
-        top_frame.pack(fill=tk.X)
-
-        # 实时计数
-        counts_frame = tk.Frame(top_frame, bg=BG_BASE)
-        counts_frame.pack(fill=tk.X)
-        tk.Label(counts_frame, text="实时数据",
-                 font=("Microsoft YaHei UI", 10, "bold"),
-                 bg=BG_BASE, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 4))
-
-        grid_frame = tk.Frame(counts_frame, bg=BG_BASE)
-        grid_frame.pack(fill=tk.X)
-        grid_frame.columnconfigure(1, weight=1)
-        grid_frame.columnconfigure(3, weight=1)
-
-        self._stat_labels = {}
-        stat_items = [
-            ("弹幕数", "danmaku"), ("SC 数", "sc"),
-            ("礼物数", "gift"), ("上舰数", "guard"),
-        ]
-        for i, (label, key) in enumerate(stat_items):
-            row, col = divmod(i, 2)
-            tk.Label(grid_frame, text=label, font=("Microsoft YaHei UI", 9),
-                     bg=BG_BASE, fg=FG_SECONDARY).grid(row=row, column=col * 2, sticky="w", padx=(0, 6))
-            lbl = tk.Label(grid_frame, text="0", font=("Consolas", 11, "bold"),
-                          bg=BG_BASE, fg=FG_PRIMARY)
-            lbl.grid(row=row, column=col * 2 + 1, sticky="w", padx=(0, 20))
-            self._stat_labels[key] = lbl
-
-        # 收入统计
-        rev_frame = tk.Frame(top_frame, bg=BG_BASE)
-        rev_frame.pack(fill=tk.X, pady=(8, 0))
-        tk.Label(rev_frame, text="收入统计",
-                 font=("Microsoft YaHei UI", 10, "bold"),
-                 bg=BG_BASE, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 4))
-
-        rev_grid = tk.Frame(rev_frame, bg=BG_BASE)
-        rev_grid.pack(fill=tk.X)
-
-        tk.Label(rev_grid, text="SC 总收入", font=("Microsoft YaHei UI", 9),
-                 bg=BG_BASE, fg=FG_SECONDARY).pack(side=tk.LEFT, padx=(0, 6))
-        self._sc_revenue_lbl = tk.Label(rev_grid, text="¥0", font=("Consolas", 11, "bold"),
-                                         bg=BG_BASE, fg=COLOR_SC)
-        self._sc_revenue_lbl.pack(side=tk.LEFT, padx=(0, 24))
-
-        tk.Label(rev_grid, text="礼物总价值", font=("Microsoft YaHei UI", 9),
-                 bg=BG_BASE, fg=FG_SECONDARY).pack(side=tk.LEFT, padx=(0, 6))
-        self._gift_value_lbl = tk.Label(rev_grid, text="0 金瓜子", font=("Consolas", 11, "bold"),
-                                         bg=BG_BASE, fg=COLOR_GIFT)
-        self._gift_value_lbl.pack(side=tk.LEFT)
-
-        # 分割线
-        tk.Frame(parent, bg=COLOR_BORDER, height=1).pack(fill=tk.X, padx=12, pady=4)
-
-        # 用户排行
-        rank_frame = tk.Frame(parent, bg=BG_BASE, padx=12, pady=4)
-        rank_frame.pack(fill=tk.X)
-        tk.Label(rank_frame, text="用户排行 Top 3",
-                 font=("Microsoft YaHei UI", 10, "bold"),
-                 bg=BG_BASE, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 4))
-
-        self._user_rank_text = tk.Text(rank_frame, height=4, wrap=tk.WORD, state=tk.DISABLED,
-                                        font=("Consolas", 9), bg=BG_ELEVATED, fg=COLOR_DANMAKU,
-                                        borderwidth=0, relief="flat", padx=8, pady=4)
-        self._user_rank_text.pack(fill=tk.X)
-
-        # 分割线
-        tk.Frame(parent, bg=COLOR_BORDER, height=1).pack(fill=tk.X, padx=12, pady=4)
-
-        # 趋势图 (Canvas)
-        chart_frame = tk.Frame(parent, bg=BG_BASE, padx=12, pady=4)
-        chart_frame.pack(fill=tk.BOTH, expand=True)
-        tk.Label(chart_frame, text="每分钟弹幕趋势",
-                 font=("Microsoft YaHei UI", 10, "bold"),
-                 bg=BG_BASE, fg=FG_PRIMARY).pack(anchor="w", pady=(0, 4))
-
-        self._chart_canvas = tk.Canvas(chart_frame, bg=BG_ELEVATED, height=140,
-                                        highlightthickness=0)
-        self._chart_canvas.pack(fill=tk.BOTH, expand=True)
+        # ── 主区域：由 RoomPanel 创建 ──
+        # (No per-room widgets created here. RoomPanel is created in _connect when a room connects.)
+        # For Phase 5 single-room, the panel will pack directly into self.root.
 
     # ── 功能开关回调 ────────────────────────────────────────
 
     def _on_toggle_guard(self):
-        if self._handler:
-            self._handler.guard_enabled = self._guard_var.get()
+        for ctx in self._rooms.values():
+            if ctx.handler:
+                ctx.handler.guard_enabled = self._guard_var.get()
 
     def _on_toggle_welcome(self):
-        if self._handler:
-            self._handler.welcome_enabled = self._welcome_var.get()
+        for ctx in self._rooms.values():
+            if ctx.handler:
+                ctx.handler.welcome_enabled = self._welcome_var.get()
 
     def _on_toggle_auto_ban(self):
-        if self._handler:
-            self._handler.auto_ban_enabled = self._auto_ban_var.get()
+        for ctx in self._rooms.values():
+            if ctx.handler:
+                ctx.handler.auto_ban_enabled = self._auto_ban_var.get()
 
     # ── 连接控制 ─────────────────────────────────────────────
 
@@ -529,10 +277,17 @@ class BiliBotGUI:
             return
 
         self._stop_event.clear()
-        self._stats.reset()
-        self._handler = None
-        self._live_room = None
-        self._fan_ranking = None
+
+        # Create RoomContext + RoomPanel for this room
+        ctx = RoomContext(room_id)
+        ctx.panel = RoomPanel(
+            parent=self.root,
+            on_send_callback=lambda: self._send_manual_danmaku(room_id),
+            on_refresh_ranking=lambda: self._refresh_ranking(room_id),
+        )
+        self._rooms[room_id] = ctx
+
+        # Start bot thread
         self._bot_thread = threading.Thread(target=self._run_bot, args=(room_id,), daemon=True)
         self._bot_thread.start()
 
@@ -544,21 +299,29 @@ class BiliBotGUI:
 
     def _disconnect(self):
         self._stop_event.set()
-        if self._loop and self._client:
-            asyncio.run_coroutine_threadsafe(
-                self._client.stop_and_close(), self._loop
-            )
+
+        # Stop all room clients
+        for room_id, ctx in list(self._rooms.items()):
+            if self._loop and ctx.client:
+                asyncio.run_coroutine_threadsafe(
+                    ctx.client.stop_and_close(), self._loop
+                )
+
         if self._bot_thread:
             self._bot_thread.join(timeout=5)
+
+        # Clean up all room panels
+        for ctx in self._rooms.values():
+            if ctx.panel and ctx.panel.pane:
+                ctx.panel.pane.destroy()
+
+        self._rooms.clear()
 
         self._connect_btn.config(text="连 接", style="Connect.TButton")
         self._status_var.set("未连接")
         self._status_label.config(fg=FG_MUTED)
         self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
         self._room_entry.config(state=tk.NORMAL)
-        self._handler = None
-        self._live_room = None
-        self._fan_ranking = None
 
     # ── 后台线程运行机器人 ───────────────────────────────────
 
@@ -566,11 +329,40 @@ class BiliBotGUI:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         try:
-            self._loop.run_until_complete(self._start_bot(room_id))
+            self._loop.run_until_complete(self._bot_main(room_id))
         except Exception as e:
-            self._msg_queue.put(("error", {"message": str(e)}))
+            # Put error on any available room's queue
+            for ctx in self._rooms.values():
+                ctx.msg_queue.put(("error", {"message": str(e)}))
+                break
 
-    async def _start_bot(self, room_id: int):
+    async def _bot_main(self, room_id: int):
+        """Create shared session, then start the single room bot."""
+        # Create shared session INSIDE the event loop (critical for blivedm)
+        cookies = http.cookies.SimpleCookie()
+        cookies["SESSDATA"] = config.SESSDATA
+        cookies["SESSDATA"]["domain"] = "bilibili.com"
+
+        self._shared_session = aiohttp.ClientSession()
+        self._shared_session.cookie_jar.update_cookies(cookies)
+
+        # Start the single room (Phase 5)
+        await self._start_room_bot(room_id)
+
+        # Cleanup
+        for ctx in self._rooms.values():
+            if ctx.client:
+                await ctx.client.stop_and_close()
+        if self._shared_session:
+            await self._shared_session.close()
+            self._shared_session = None
+
+    async def _start_room_bot(self, room_id: int):
+        """Initialize bot components for one room and run until disconnect."""
+        ctx = self._rooms.get(room_id)
+        if not ctx:
+            return
+
         credential = Credential(
             sessdata=config.SESSDATA,
             bili_jct=config.BILI_JCT,
@@ -585,191 +377,127 @@ class BiliBotGUI:
             rules=config.RESPONSE_RULES,
             sc_template=config.SC_THANK_YOU_TEMPLATE,
         )
-        sender = DanmakuSender(
+
+        ctx.sender = DanmakuSender(
             room_display_id=room_id,
             credential=credential,
             cooldown=config.SEND_COOLDOWN,
         )
 
-        live_room = LiveRoom(room_display_id=room_id, credential=credential)
-        room_info = await live_room.get_room_play_info()
-        real_room_id = room_info["room_id"]
+        ctx.live_room = LiveRoom(room_display_id=room_id, credential=credential)
+        room_info = await ctx.live_room.get_room_play_info()
+        ctx.real_room_id = room_info["room_id"]
 
-        handler = DanmakuBotHandler(
+        ctx.handler = DanmakuBotHandler(
             song_handler=song_handler,
             responder=responder,
-            sender=sender,
-            live_room=live_room,
-            real_room_id=real_room_id,
+            sender=ctx.sender,
+            live_room=ctx.live_room,
+            real_room_id=ctx.real_room_id,
             bot_uid=config.BOT_UID,
-            msg_callback=self._on_bot_message,
-            stats=self._stats,
+            msg_callback=lambda msg_type, data, rid=room_id: self._on_room_message(rid, msg_type, data),
+            stats=ctx.stats,
         )
 
-        # 存储引用供 GUI 使用
-        self._handler = handler
-        self._live_room = live_room
-        self._fan_ranking = FanRankingService(live_room)
+        ctx.fan_ranking = FanRankingService(ctx.live_room)
 
-        # 同步功能开关状态
-        handler.guard_enabled = self._guard_var.get()
-        handler.welcome_enabled = self._welcome_var.get()
-        handler.auto_ban_enabled = self._auto_ban_var.get()
+        # Sync feature toggles
+        ctx.handler.guard_enabled = self._guard_var.get()
+        ctx.handler.welcome_enabled = self._welcome_var.get()
+        ctx.handler.auto_ban_enabled = self._auto_ban_var.get()
 
-        cookies = http.cookies.SimpleCookie()
-        cookies["SESSDATA"] = config.SESSDATA
-        cookies["SESSDATA"]["domain"] = "bilibili.com"
+        ctx.client = blivedm.BLiveClient(room_id=room_id, session=self._shared_session)
+        ctx.client.set_handler(ctx.handler)
+        ctx.client.start()
 
-        self._session = aiohttp.ClientSession()
-        self._session.cookie_jar.update_cookies(cookies)
+        ctx.msg_queue.put(("status", {"text": f"已连接房间 {room_id}"}))
+        ctx.connected = True
 
-        self._client = blivedm.BLiveClient(room_id=room_id, session=self._session)
-        self._client.set_handler(handler)
-        self._client.start()
+        await ctx.client.join()
 
-        self._msg_queue.put(("status", {"text": f"已连接房间 {room_id}"}))
+        ctx.connected = False
+        ctx.msg_queue.put(("status", {"text": "已断开"}))
 
-        await self._client.join()
-
-        # 正常退出后清理
-        if self._session:
-            await self._session.close()
-        self._msg_queue.put(("status", {"text": "已断开"}))
-
-    def _on_bot_message(self, msg_type: str, data: dict):
-        """bot 线程回调 → 线程安全地放入队列"""
-        self._msg_queue.put((msg_type, data))
+    def _on_room_message(self, room_id: int, msg_type: str, data: dict):
+        """Bot thread callback -- route message to correct room's queue."""
+        ctx = self._rooms.get(room_id)
+        if ctx:
+            ctx.msg_queue.put((msg_type, data))
 
     # ── GUI 主线程轮询队列 ───────────────────────────────────
 
     def _poll_queue(self):
-        while True:
-            try:
-                msg_type, data = self._msg_queue.get_nowait()
-            except queue.Empty:
-                break
+        """Poll all room queues for pending messages."""
+        for room_id, ctx in list(self._rooms.items()):
+            while True:
+                try:
+                    msg_type, data = ctx.msg_queue.get_nowait()
+                except queue.Empty:
+                    break
 
-            if msg_type == "danmaku":
-                self._append_danmaku(data)
-            elif msg_type == "song":
-                self._append_danmaku_song(data)
-                self._add_song(data)
-            elif msg_type == "sc":
-                self._append_sc(data)
-            elif msg_type == "ban":
-                self._append_ban(data)
-            elif msg_type == "gift":
-                self._append_gift(data)
-            elif msg_type == "guard":
-                self._append_guard(data)
-            elif msg_type == "heartbeat":
-                self._on_heartbeat(data)
-            elif msg_type == "status":
-                text = data["text"]
-                self._status_var.set(text)
-                if "已连接" in text:
-                    self._status_label.config(fg=COLOR_SUCCESS)
-                    self._status_dot.itemconfig(self._dot_item, fill=COLOR_SUCCESS)
-                else:
-                    self._status_label.config(fg=FG_MUTED)
+                panel = ctx.panel
+                if not panel:
+                    continue
+
+                if msg_type == "danmaku":
+                    panel.append_danmaku(data)
+                elif msg_type == "song":
+                    panel.append_danmaku_song(data)
+                    panel.add_song(data)
+                elif msg_type == "sc":
+                    panel.append_sc(data)
+                elif msg_type == "ban":
+                    panel.append_ban(data)
+                elif msg_type == "gift":
+                    panel.append_gift(data)
+                elif msg_type == "guard":
+                    panel.append_guard(data)
+                elif msg_type == "heartbeat":
+                    pop = data.get("popularity", 0)
+                    ctx.popularity = pop
+                    self._pop_var.set(f"人气: {pop:,}")
+                elif msg_type == "status":
+                    text = data["text"]
+                    self._status_var.set(text)
+                    if "已连接" in text:
+                        self._status_label.config(fg=COLOR_SUCCESS)
+                        self._status_dot.itemconfig(self._dot_item, fill=COLOR_SUCCESS)
+                    else:
+                        self._status_label.config(fg=FG_MUTED)
+                        self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
+                elif msg_type == "error":
+                    messagebox.showerror("错误", data["message"])
+                    self._connect_btn.config(text="连 接", style="Connect.TButton")
+                    self._status_var.set("连接失败")
+                    self._status_label.config(fg=COLOR_ERROR)
                     self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
-            elif msg_type == "error":
-                messagebox.showerror("错误", data["message"])
-                self._connect_btn.config(text="连 接", style="Connect.TButton")
-                self._status_var.set("连接失败")
-                self._status_label.config(fg=COLOR_ERROR)
-                self._status_dot.itemconfig(self._dot_item, fill=COLOR_ERROR)
-                self._room_entry.config(state=tk.NORMAL)
-            elif msg_type == "ranking_data":
-                self._update_ranking_display(data)
+                    self._room_entry.config(state=tk.NORMAL)
+                elif msg_type == "ranking_data":
+                    self._update_ranking_display(room_id, data)
+                elif msg_type == "manual_send":
+                    panel.on_manual_send_result(data)
 
         self.root.after(100, self._poll_queue)
 
-    # ── 弹幕显示 ─────────────────────────────────────────────
-
-    def _append_danmaku(self, d: dict):
-        ts = datetime.now().strftime('%H:%M:%S')
-        self._danmaku_text.config(state=tk.NORMAL)
-        self._danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
-        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
-        self._danmaku_text.insert(tk.END, f" (勋章={d['medal_level']}): ", "danmaku")
-        self._danmaku_text.insert(tk.END, f"{d['msg']}\n", "danmaku")
-        self._danmaku_text.see(tk.END)
-        self._danmaku_text.config(state=tk.DISABLED)
-
-    def _append_danmaku_song(self, d: dict):
-        display = d["song"] + (f" - {d['singer']}" if d.get("singer") else "")
-        self._danmaku_text.config(state=tk.NORMAL)
-        self._danmaku_text.insert(tk.END, f"[{d['time']}] ", "timestamp")
-        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
-        self._danmaku_text.insert(tk.END, f" 点歌: ", "danmaku")
-        self._danmaku_text.insert(tk.END, f"{display}\n", "song")
-        self._danmaku_text.see(tk.END)
-        self._danmaku_text.config(state=tk.DISABLED)
-
-    def _append_sc(self, d: dict):
-        ts = datetime.now().strftime('%H:%M:%S')
-        self._danmaku_text.config(state=tk.NORMAL)
-        self._danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
-        self._danmaku_text.insert(tk.END, f"[SC ¥{d['price']}] ", "sc")
-        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
-        self._danmaku_text.insert(tk.END, f": {d['message']}\n", "sc")
-        self._danmaku_text.see(tk.END)
-        self._danmaku_text.config(state=tk.DISABLED)
-
-    def _append_ban(self, d: dict):
-        ts = datetime.now().strftime('%H:%M:%S')
-        self._danmaku_text.config(state=tk.NORMAL)
-        self._danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
-        self._danmaku_text.insert(tk.END, f"[禁言] ", "ban")
-        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
-        self._danmaku_text.insert(tk.END, f" 触发敏感词 '{d['word']}': {d['msg']}\n", "ban")
-        self._danmaku_text.see(tk.END)
-        self._danmaku_text.config(state=tk.DISABLED)
-
-    def _append_gift(self, d: dict):
-        ts = datetime.now().strftime('%H:%M:%S')
-        self._danmaku_text.config(state=tk.NORMAL)
-        self._danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
-        self._danmaku_text.insert(tk.END, f"[礼物] ", "gift")
-        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
-        self._danmaku_text.insert(tk.END,
-            f" 赠送 {d['gift_name']}x{d['num']} ({d['coin_type']})\n", "gift")
-        self._danmaku_text.see(tk.END)
-        self._danmaku_text.config(state=tk.DISABLED)
-
-    def _append_guard(self, d: dict):
-        ts = datetime.now().strftime('%H:%M:%S')
-        guard_name = GUARD_NAMES.get(d.get("guard_level", 3), "舰长")
-        self._danmaku_text.config(state=tk.NORMAL)
-        self._danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
-        self._danmaku_text.insert(tk.END, f"[上舰] ", "guard")
-        self._danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
-        self._danmaku_text.insert(tk.END, f" 开通{guard_name}x{d.get('num', 1)}\n", "guard")
-        self._danmaku_text.see(tk.END)
-        self._danmaku_text.config(state=tk.DISABLED)
-
-    def _on_heartbeat(self, data: dict):
-        pop = data.get("popularity", 0)
-        self._popularity = pop
-        self._pop_var.set(f"人气: {pop:,}")
-
-    def _add_song(self, d: dict):
-        display = d["song"] + (f" - {d['singer']}" if d.get("singer") else "")
-        self._song_tree.insert("", 0, values=(display, d["uname"], d["time"]))
-
     # ── 排行榜刷新 ──────────────────────────────────────────
 
-    def _refresh_ranking(self):
-        """刷新排行榜数据 (在 asyncio loop 中执行)"""
-        if not self._fan_ranking or not self._loop:
+    def _refresh_ranking(self, room_id: int = None):
+        """Refresh ranking data for a specific room."""
+        if room_id is None:
+            # Fallback: use first room
+            if not self._rooms:
+                return
+            room_id = next(iter(self._rooms))
+
+        ctx = self._rooms.get(room_id)
+        if not ctx or not ctx.fan_ranking or not self._loop:
             return
 
         async def _fetch():
             try:
-                medal_data = await self._fan_ranking.get_fans_medal_rank()
-                guard_data = await self._fan_ranking.get_dahanghai()
-                self._msg_queue.put(("ranking_data", {
+                medal_data = await ctx.fan_ranking.get_fans_medal_rank()
+                guard_data = await ctx.fan_ranking.get_dahanghai()
+                ctx.msg_queue.put(("ranking_data", {
                     "medal": medal_data,
                     "guard": guard_data,
                 }))
@@ -778,103 +506,64 @@ class BiliBotGUI:
 
         asyncio.run_coroutine_threadsafe(_fetch(), self._loop)
 
-    def _update_ranking_display(self, data: dict):
-        """更新排行榜 Treeview (主线程)"""
+    def _update_ranking_display(self, room_id: int, data: dict):
+        """Update ranking treeviews for a specific room."""
+        ctx = self._rooms.get(room_id)
+        if not ctx or not ctx.panel:
+            return
+
         # 粉丝勋章
-        self._medal_tree.delete(*self._medal_tree.get_children())
+        ctx.panel.medal_tree.delete(*ctx.panel.medal_tree.get_children())
         for i, item in enumerate(data.get("medal", [])[:50], 1):
-            self._medal_tree.insert("", tk.END, values=(i, item["uname"], item["medal_level"]))
+            ctx.panel.medal_tree.insert("", tk.END, values=(i, item["uname"], item["medal_level"]))
 
         # 大航海
-        self._guard_tree.delete(*self._guard_tree.get_children())
+        ctx.panel.guard_tree.delete(*ctx.panel.guard_tree.get_children())
         for i, item in enumerate(data.get("guard", [])[:50], 1):
             level_name = GUARD_NAMES.get(item["guard_level"], "舰长")
-            self._guard_tree.insert("", tk.END, values=(i, item["uname"], level_name))
+            ctx.panel.guard_tree.insert("", tk.END, values=(i, item["uname"], level_name))
 
     # ── 统计刷新 ────────────────────────────────────────────
 
     def _refresh_stats_timer(self):
-        """每 2 秒刷新统计面板"""
-        self._update_stats_display()
-        self._draw_trend_chart()
+        """Refresh stats for active room every 2 seconds."""
+        # Get active room (Phase 5: single room = first room in dict)
+        for ctx in self._rooms.values():
+            if ctx.panel and ctx.connected:
+                stats = ctx.stats.get_stats()
+                ctx.panel.update_stats_display(stats)
+                ctx.panel.draw_trend_chart(stats)
+                break  # Phase 5: only one room
         self.root.after(2000, self._refresh_stats_timer)
 
-    def _update_stats_display(self):
-        stats = self._stats.get_stats()
-        counts = stats["counts"]
+    # ── 手动发送弹幕 ─────────────────────────────────────────
 
-        # 更新计数标签
-        for key in ("danmaku", "sc", "gift", "guard"):
-            if key in self._stat_labels:
-                self._stat_labels[key].config(text=str(counts.get(key, 0)))
+    def _send_manual_danmaku(self, room_id: int = None):
+        """Send manual danmaku to a specific room."""
+        if room_id is None:
+            if not self._rooms:
+                messagebox.showwarning("提示", "请先连接直播间")
+                return
+            room_id = next(iter(self._rooms))
 
-        # 收入
-        self._sc_revenue_lbl.config(text=f"¥{stats['sc_revenue']:.0f}")
-        self._gift_value_lbl.config(text=f"{stats['gift_value']:,} 金瓜子")
-
-        # 用户排行
-        self._user_rank_text.config(state=tk.NORMAL)
-        self._user_rank_text.delete("1.0", tk.END)
-
-        for label, items in [("弹幕", stats["top_danmaku"]),
-                              ("送礼", stats["top_gift"]),
-                              ("SC", stats["top_sc"])]:
-            if items:
-                line = f"{label}: " + " | ".join(f"{n}({c})" for n, c in items) + "\n"
-                self._user_rank_text.insert(tk.END, line)
-
-        self._user_rank_text.config(state=tk.DISABLED)
-
-    def _draw_trend_chart(self):
-        """用 Canvas 绘制每分钟弹幕趋势柱状图"""
-        canvas = self._chart_canvas
-        canvas.delete("all")
-
-        stats = self._stats.get_stats()
-        timeline = stats.get("timeline", [])
-
-        if not timeline:
-            # 无数据时显示提示
-            w = canvas.winfo_width() or 300
-            h = canvas.winfo_height() or 140
-            canvas.create_text(w // 2, h // 2, text="等待数据...",
-                              fill=FG_MUTED, font=("Microsoft YaHei UI", 9))
+        ctx = self._rooms.get(room_id)
+        if not ctx or not ctx.handler or not self._loop:
+            messagebox.showwarning("提示", "请先连接直播间")
             return
 
-        # 最近 30 分钟
-        data = timeline[-30:]
-        max_val = max((count for _, count in data), default=1)
-        if max_val == 0:
-            max_val = 1
+        text = ctx.panel.send_entry_var.get().strip()
+        if not text:
+            return
 
-        w = canvas.winfo_width() or 300
-        h = canvas.winfo_height() or 140
-        margin_left = 30
-        margin_bottom = 16
-        margin_top = 8
-        chart_w = w - margin_left - 8
-        chart_h = h - margin_top - margin_bottom
-        bar_w = max(chart_w / len(data) - 2, 4)
+        async def _do_send():
+            try:
+                ok = await ctx.sender.send(text)
+                ctx.msg_queue.put(("manual_send", {"text": text, "ok": ok}))
+            except Exception as e:
+                ctx.msg_queue.put(("manual_send", {"text": text, "ok": False, "error": str(e)}))
 
-        # Y 轴标签
-        canvas.create_text(margin_left - 4, margin_top, text=str(max_val),
-                          anchor="e", fill=FG_MUTED, font=("Consolas", 7))
-        canvas.create_text(margin_left - 4, margin_top + chart_h, text="0",
-                          anchor="e", fill=FG_MUTED, font=("Consolas", 7))
-
-        # 柱子
-        for i, (ts, count) in enumerate(data):
-            x0 = margin_left + i * (chart_w / len(data))
-            bar_h = (count / max_val) * chart_h if max_val > 0 else 0
-            y0 = margin_top + chart_h - bar_h
-            y1 = margin_top + chart_h
-            canvas.create_rectangle(x0, y0, x0 + bar_w, y1,
-                                     fill=ACCENT, outline="")
-
-        # X 轴
-        canvas.create_line(margin_left, margin_top + chart_h,
-                          w - 8, margin_top + chart_h,
-                          fill=COLOR_BORDER)
+        asyncio.run_coroutine_threadsafe(_do_send(), self._loop)
+        ctx.panel.send_entry_var.set("")
 
     # ── 启动 ─────────────────────────────────────────────────
 
