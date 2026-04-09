@@ -25,6 +25,7 @@ from bot import DanmakuBotHandler
 from responder import KeywordResponseHandler
 from sender import DanmakuSender
 from song_request import SongRequestHandler
+from stats_collector import StatsCollector
 
 
 def setup_logging():
@@ -106,6 +107,7 @@ async def main():
         live_room=live_room,
         real_room_id=real_room_id,
         bot_uid=config.BOT_UID,
+        stats=StatsCollector(),
     )
 
     # 构建 aiohttp session（带 cookie 用于 blivedm 获取用户名）

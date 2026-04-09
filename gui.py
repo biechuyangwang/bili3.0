@@ -28,6 +28,7 @@ from bot import DanmakuBotHandler
 from responder import KeywordResponseHandler
 from sender import DanmakuSender
 from song_request import SongRequestHandler
+from stats_collector import StatsCollector
 
 # ── 暗色主题色板 (Vercel/Linear 风格) ──────────────────────────
 # 背景
@@ -72,6 +73,7 @@ class BiliBotGUI:
         self._session: aiohttp.ClientSession | None = None
         self._stop_event = threading.Event()
         self._msg_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
+        self._stats = StatsCollector()
 
         self._build_ui()
         self._poll_queue()
@@ -301,6 +303,7 @@ class BiliBotGUI:
             return
 
         self._stop_event.clear()
+        self._stats.reset()
         self._bot_thread = threading.Thread(target=self._run_bot, args=(room_id,), daemon=True)
         self._bot_thread.start()
 
@@ -368,6 +371,7 @@ class BiliBotGUI:
             real_room_id=real_room_id,
             bot_uid=config.BOT_UID,
             msg_callback=self._on_bot_message,
+            stats=self._stats,
         )
 
         cookies = http.cookies.SimpleCookie()

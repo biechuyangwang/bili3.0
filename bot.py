@@ -17,6 +17,7 @@ import blivedm.models.web as web_models
 
 import config
 from song_search import search_qq_music
+from stats_collector import StatsCollector
 
 from responder import KeywordResponseHandler
 from sender import DanmakuSender
@@ -35,7 +36,8 @@ class DanmakuBotHandler(blivedm.BaseHandler):
 
     def __init__(self, song_handler: SongRequestHandler, responder: KeywordResponseHandler,
                  sender: DanmakuSender, live_room=None, real_room_id: int = 0, bot_uid: int = 0,
-                 msg_callback: Callable[[str, dict], None] = None):
+                 msg_callback: Callable[[str, dict], None] = None,
+                 stats: StatsCollector = None):
         self._song_handler = song_handler
         self._responder = responder
         self._sender = sender
@@ -43,6 +45,7 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         self._real_room_id = real_room_id
         self._bot_uid = bot_uid
         self._msg_callback = msg_callback
+        self.stats = stats or StatsCollector()
         self._last_welcome_time: float = 0.0  # timestamp of last welcome sent
         self._welcomed_users: dict[int, float] = {}  # uid -> last welcome timestamp
 
@@ -83,6 +86,8 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         logger.info("[弹幕] %s (uid=%s, 房间=%s, 勋章=%s): %s",
                      message.uname, message.uid, message.medal_room_id,
                      message.medal_level, message.msg)
+
+        self.stats.record_danmaku(message.uname)
 
         self._notify("danmaku", {
             "uname": message.uname,
@@ -156,6 +161,8 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
         logger.info("[SC] ¥%d %s: %s", message.price, message.uname, message.message)
 
+        self.stats.record_sc(message.uname, message.price)
+
         self._notify("sc", {
             "uname": message.uname,
             "price": message.price,
@@ -174,6 +181,10 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     def _on_gift(self, client: blivedm.BLiveClient, message: web_models.GiftMessage):
         logger.info("[礼物] %s 赠送 %sx%d (%s)",
                      message.uname, message.gift_name, message.num, message.coin_type)
+
+        # 只统计金瓜子礼物价值（coin_type == "gold"）
+        total_gold = message.total_coin if message.coin_type == "gold" else 0
+        self.stats.record_gift(message.uname, total_gold)
 
         self._notify("gift", {
             "uname": message.uname,
@@ -195,6 +206,8 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     def _on_buy_guard(self, client: blivedm.BLiveClient, message: web_models.GuardBuyMessage):
         logger.info("[上舰] %s 开通 %s (等级=%d, 数量=%d)",
                      message.username, message.gift_name, message.guard_level, message.num)
+
+        self.stats.record_guard()
 
         self._notify("guard", {
             "uname": message.username,
