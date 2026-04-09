@@ -7,6 +7,9 @@ fan_ranking, stats), GUI panel reference, message queue, and state flags.
 Created when a room connects, destroyed when it disconnects.
 """
 
+import logging
+import logging.handlers
+import os
 import queue
 from typing import TYPE_CHECKING
 
@@ -49,6 +52,43 @@ class RoomContext:
         # Thread-safe message bridge
         self.msg_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
 
+        # Per-room logging
+        self.logger: logging.Logger | None = None
+        self.file_handler: logging.handlers.TimedRotatingFileHandler | None = None
+
         # State flags
         self.connected: bool = False
         self.popularity: int = 0
+        self.error_message: str | None = None
+
+    def setup_room_logger(self):
+        """Create per-room log directory and file handler for danmaku logging."""
+        log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", str(self.room_id))
+        os.makedirs(log_dir, exist_ok=True)
+
+        logger_name = f"danmaku_bot.room.{self.room_id}"
+        self.logger = logging.getLogger(logger_name)
+        self.logger.setLevel(logging.INFO)
+        # Prevent propagation to root logger to avoid duplicate entries
+        self.logger.propagate = False
+
+        log_format = "%(asctime)s [%(levelname)s] %(message)s"
+        self.file_handler = logging.handlers.TimedRotatingFileHandler(
+            filename=os.path.join(log_dir, "danmaku.log"),
+            when="midnight", interval=1, backupCount=30, encoding="utf-8",
+        )
+        self.file_handler.suffix = "%Y-%m-%d.log"
+        self.file_handler.setLevel(logging.INFO)
+        self.file_handler.setFormatter(logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S"))
+        self.logger.addHandler(self.file_handler)
+
+    def close_room_logger(self):
+        """Close and remove the per-room log handler. Does NOT delete log files."""
+        if self.file_handler and self.logger:
+            self.logger.removeHandler(self.file_handler)
+            self.file_handler.close()
+            self.file_handler = None
+        if self.logger:
+            # Remove all handlers to fully release the logger
+            self.logger.handlers.clear()
+            self.logger = None

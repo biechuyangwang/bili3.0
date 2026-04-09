@@ -85,6 +85,8 @@ class RoomPanel:
                                           font=("Consolas", 9))
         self.danmaku_text.tag_configure("uname", foreground="#c678dd")
         self.danmaku_text.tag_configure("manual", foreground=ACCENT)
+        self.danmaku_text.tag_configure("error", foreground=COLOR_ERROR,
+                                          font=("Consolas", 10, "bold"))
 
     # ── Send bar ──────────────────────────────────────────────────
 
@@ -363,6 +365,15 @@ class RoomPanel:
         self.danmaku_text.insert(tk.END, f"[上舰] ", "guard")
         self.danmaku_text.insert(tk.END, f"{d['uname']}", "uname")
         self.danmaku_text.insert(tk.END, f" 开通{guard_name}x{d.get('num', 1)}\n", "guard")
+        self.danmaku_text.see(tk.END)
+        self.danmaku_text.config(state=tk.DISABLED)
+
+    def append_error(self, message: str):
+        """Display an error message in the danmaku text area."""
+        ts = datetime.now().strftime('%H:%M:%S')
+        self.danmaku_text.config(state=tk.NORMAL)
+        self.danmaku_text.insert(tk.END, f"[{ts}] ", "timestamp")
+        self.danmaku_text.insert(tk.END, f"[错误] {message}\n", "error")
         self.danmaku_text.see(tk.END)
         self.danmaku_text.config(state=tk.DISABLED)
 

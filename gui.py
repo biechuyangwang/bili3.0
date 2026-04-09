@@ -502,6 +502,9 @@ class BiliBotGUI:
             except Exception:
                 pass
 
+        # Close per-room log handler (does NOT delete log files)
+        ctx.close_room_logger()
+
         # Destroy content frame (destroys RoomPanel with it)
         room_frame = self._room_frames.pop(room_id, None)
         if room_frame:
@@ -585,6 +588,9 @@ class BiliBotGUI:
         if not ctx:
             return
         try:
+            # Set up per-room logging
+            ctx.setup_room_logger()
+
             credential = Credential(
                 sessdata=config.SESSDATA,
                 bili_jct=config.BILI_JCT,
@@ -651,10 +657,32 @@ class BiliBotGUI:
             ctx.msg_queue.put(("error", {"message": f"房间 {room_id} 连接失败: {e}"}))
 
     def _on_room_message(self, room_id: int, msg_type: str, data: dict):
-        """Bot thread callback -- route message to correct room's queue."""
+        """Bot thread callback -- route message to correct room's queue and log to file."""
         ctx = self._rooms.get(room_id)
         if ctx:
             ctx.msg_queue.put((msg_type, data))
+
+            # Log danmaku events to per-room log file
+            if ctx.logger:
+                try:
+                    if msg_type == "danmaku":
+                        ctx.logger.info("[弹幕] %s (uid=%s): %s",
+                                        data.get("uname", ""), data.get("uid", ""), data.get("msg", ""))
+                    elif msg_type == "sc":
+                        ctx.logger.info("[SC] %s: %s (¥%s)",
+                                        data.get("uname", ""), data.get("message", ""), data.get("price", 0))
+                    elif msg_type == "gift":
+                        ctx.logger.info("[礼物] %s 赠送 %sx%s",
+                                        data.get("uname", ""), data.get("gift_name", ""),
+                                        data.get("num", 1))
+                    elif msg_type == "guard":
+                        ctx.logger.info("[上舰] %s (guard_level=%s)",
+                                        data.get("uname", ""), data.get("guard_level", ""))
+                    elif msg_type == "ban":
+                        ctx.logger.info("[禁言] %s 触发敏感词 '%s'",
+                                        data.get("uname", ""), data.get("word", ""))
+                except Exception:
+                    pass  # logging failure must not break message flow
 
     # ── GUI 主线程轮询队列 ───────────────────────────────────
 
@@ -698,7 +726,9 @@ class BiliBotGUI:
                         self._update_top_bar_state()
                         self._update_tab_dot(room_id, FG_MUTED)
                 elif msg_type == "error":
-                    messagebox.showerror("错误", data["message"])
+                    ctx.error_message = data.get("message", "未知错误")
+                    # Show error in danmaku text area (non-blocking, per-room)
+                    panel.append_error(ctx.error_message)
                     self._update_tab_dot(room_id, COLOR_ERROR)
                     self._update_top_bar_state()
                 elif msg_type == "ranking_data":
