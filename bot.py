@@ -52,6 +52,11 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         # 加载敏感词
         self._ban_words: set[str] = self._load_ban_words()
 
+        # 功能开关（可通过 GUI 控制）
+        self.guard_enabled = True
+        self.welcome_enabled = True
+        self.auto_ban_enabled = True
+
     def _notify(self, msg_type: str, data: dict):
         if self._msg_callback:
             self._msg_callback(msg_type, data)
@@ -98,7 +103,7 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         })
 
         # ── 自动禁言检查（最优先，不区分是否粉丝） ──
-        if self._ban_words and self._live_room:
+        if self.auto_ban_enabled and self._ban_words and self._live_room:
             for word in self._ban_words:
                 if word in message.msg:
                     logger.info("[禁言] %s (uid=%d) 触发敏感词 '%s': %s",
@@ -209,6 +214,9 @@ class DanmakuBotHandler(blivedm.BaseHandler):
 
         self.stats.record_guard()
 
+        if not self.guard_enabled:
+            return
+
         self._notify("guard", {
             "uname": message.username,
             "uid": message.uid,
@@ -229,6 +237,9 @@ class DanmakuBotHandler(blivedm.BaseHandler):
             return
 
         logger.info("[进场] %s (uid=%d, msg_type=%d)", message.username, message.uid, message.msg_type)
+
+        if not self.welcome_enabled:
+            return
 
         self._notify("welcome", {
             "uname": message.username,
