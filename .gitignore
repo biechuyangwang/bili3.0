@@ -16,3 +16,11 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# 运行时日志
+logs/
+
+# 开发工具产物
+.planning/
+REPORT.md
+test_scheme_url.py
