@@ -25,5 +25,6 @@ medal_cache.json
 
 # 开发工具产物
 .planning/
+CLAUDE.md
 REPORT.md
 test_scheme_url.py
