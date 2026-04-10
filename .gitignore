@@ -20,6 +20,9 @@ venv/
 # 运行时日志
 logs/
 
+# 运行时数据
+medal_cache.json
+
 # 开发工具产物
 .planning/
 REPORT.md

@@ -19,6 +19,7 @@ import config
 from song_search import search_qq_music
 from stats_collector import StatsCollector
 
+from medal_collector import MedalCollector
 from responder import KeywordResponseHandler
 from sender import DanmakuSender
 from song_request import SongRequestHandler
@@ -46,6 +47,8 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         self._bot_uid = bot_uid
         self._msg_callback = msg_callback
         self.stats = stats or StatsCollector()
+        self.medal_collector = MedalCollector()
+        self.medal_collector.start_periodic_save()
         self._last_welcome_time: float = 0.0  # timestamp of last welcome sent
         self._welcomed_users: dict[int, float] = {}  # uid -> last welcome timestamp
 
@@ -91,6 +94,12 @@ class DanmakuBotHandler(blivedm.BaseHandler):
         logger.info("[弹幕] %s (uid=%s, 房间=%s, 勋章=%s): %s",
                      message.uname, message.uid, message.medal_room_id,
                      message.medal_level, message.msg)
+
+        self.medal_collector.collect_from_danmaku(
+            medal_name=message.medal_name,
+            runame=message.runame,
+            medal_room_id=message.medal_room_id,
+        )
 
         self.stats.record_danmaku(message.uname)
 
@@ -166,6 +175,12 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     def _on_super_chat(self, client: blivedm.BLiveClient, message: web_models.SuperChatMessage):
         logger.info("[SC] ¥%d %s: %s", message.price, message.uname, message.message)
 
+        self.medal_collector.collect_from_gift_or_sc(
+            medal_name=message.medal_name,
+            medal_room_id=message.medal_room_id,
+            medal_ruid=message.medal_ruid,
+        )
+
         self.stats.record_sc(message.uname, message.price)
 
         self._notify("sc", {
@@ -186,6 +201,12 @@ class DanmakuBotHandler(blivedm.BaseHandler):
     def _on_gift(self, client: blivedm.BLiveClient, message: web_models.GiftMessage):
         logger.info("[礼物] %s 赠送 %sx%d (%s)",
                      message.uname, message.gift_name, message.num, message.coin_type)
+
+        self.medal_collector.collect_from_gift_or_sc(
+            medal_name=message.medal_name,
+            medal_room_id=message.medal_room_id,
+            medal_ruid=message.medal_ruid,
+        )
 
         # 只统计金瓜子礼物价值（coin_type == "gold"）
         total_gold = message.total_coin if message.coin_type == "gold" else 0
